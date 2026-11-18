@@ -34,9 +34,11 @@ struct ActionHistoryFrame {
           preparation(seed.extrapolation.preparation),
           extrapolation{seed.extrapolation.players,     preparation,
                         seed.extrapolation.attachments, seed.extrapolation.bones,
-                        seed.extrapolation.movement,    seed.extrapolation.prediction_limit},
+                        seed.extrapolation.movement,    seed.extrapolation.prediction_limit,
+                        seed.extrapolation.validate_record, seed.extrapolation.rebuild_pose},
           history{extrapolation, seed.alternative,   seed.rotation,        seed.matrix_scratch,
-                  clock,         seed.interpolation, seed.maximum_unlag_ms},
+                  clock,         seed.interpolation, seed.maximum_unlag_ms, seed.jitter_fix,
+                  seed.animation_rebuild, seed.resolver_corrections},
           live_budget(budget) {
         preparation.global_frame = std::bit_cast<std::uint32_t>(clock);
         preparation.current_timing =

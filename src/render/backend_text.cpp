@@ -143,8 +143,6 @@ void RendererBackend::text(std::int32_t x, std::int32_t y, std::uint32_t color, 
                 auto* texture = font_texture(*font);
                 if (!texture)
                     continue;
-                if (!prepare(D3DPT_TRIANGLESTRIP, texture, 4, false))
-                    continue;
                 const auto draw_x = add_text(pen_x, glyph.advance_first);
                 const auto next = add_text(draw_x, glyph.advance_second);
                 if (next >= limit)
@@ -152,11 +150,9 @@ void RendererBackend::text(std::int32_t x, std::int32_t y, std::uint32_t color, 
                 const auto left = float(draw_x), top = float(pen_y);
                 const auto right = (left + glyph.right) - glyph.left;
                 const auto bottom = (top + glyph.bottom) - glyph.top;
-                vertex(left, top, argb, glyph.u0, glyph.v0);
-                vertex(right, top, argb, glyph.u1, glyph.v0);
-                vertex(left, bottom, argb, glyph.u0, glyph.v1);
-                vertex(right, bottom, argb, glyph.u1, glyph.v1);
-                pen_x = next;
+                if (quad(texture, left, top, right, bottom, {argb, argb, argb, argb},
+                         glyph.u0, glyph.v0, glyph.u1, glyph.v1))
+                    pen_x = next;
             }
         }
     };

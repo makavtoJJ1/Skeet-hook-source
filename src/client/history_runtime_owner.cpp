@@ -227,7 +227,10 @@ struct HistoryRuntimeOwner::Data {
                         &config.rage_settings().global.anti_aim_correction.value,
                         0,
                         entity.engine,
-                        nullptr},
+                        config.rage_settings().global.experimental(rage::ExperimentalRageOption::animation),
+                        {&config.rage_settings().global.jitter_fix.value,
+                         &config.rage_settings().global.experimental_rage.value},
+                        config.rage_settings().global.experimental(rage::ExperimentalRageOption::resolver)},
           jobs(imports.thread_pool, storage.memory()), environment{&storage,
                                                                    trace,
                                                                    point_contents,
@@ -235,7 +238,7 @@ struct HistoryRuntimeOwner::Data {
                                                                    scene.queries().ballistics(),
                                                                    bones.trigonometry(),
                                                                    entity.transform_override,
-                                                                   nullptr},
+                                                                   config.rage_settings().global.experimental(rage::ExperimentalRageOption::resolver)},
           history_environment{environment, entity.offsets.origin, numeric.environment_atan2},
           animation(lagcomp::native_history_animation_engine(
               storage.data().native_cell<void*>(0x434693F0u))),
@@ -351,7 +354,7 @@ struct HistoryRuntimeOwner::Data {
     static lagcomp::HistoryResolverFields resolver_fields(const engine::NativeOffsetGlobals& g) {
         return {offset(g, 0x43468354u), offset(g, 0x434670E0u), offset(g, 0x434679CCu),
                 offset(g, 0x43467D78u), offset(g, 0x43467E8Cu), offset(g, 0x43468240u),
-                offset(g, 0x43468D6Cu)};
+                offset(g, 0x43468D6Cu), offset(g, 0x434670A0u)};
     }
     static lagcomp::HistoryAnimationPublishFields
     publication_fields(const engine::NativeOffsetGlobals& g) {

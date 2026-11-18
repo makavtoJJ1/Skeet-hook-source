@@ -135,6 +135,10 @@ LegitMenu::~LegitMenu() {
     for (auto* category : categories())
         std::erase(tab_.categories, category);
 }
+void LegitMenu::append_weapon_keys(std::vector<ConfigDescriptor*>& descriptors) const {
+    descriptors.insert(descriptors.end(), aim_keys_.begin(), aim_keys_.end());
+    descriptors.insert(descriptors.end(), trigger_keys_.begin(), trigger_keys_.end());
+}
 void LegitMenu::weapon_changed(void* context, Widget&) {
     static_cast<LegitMenu*>(context)->bind_weapon(); // 0x4334B817
 }

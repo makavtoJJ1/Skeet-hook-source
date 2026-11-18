@@ -14,14 +14,16 @@ TargetShotChoice select_acquired_target_for_shot(TargetBatch& batch, Acquisition
     auto& context_flags = state.flags;
     if (!batch.count)
         return {};
-    if ((context_flags & 0x10U) && frame.weapon_id_d8 == 64 && (frame.flags & 0x40U)) {
+    const bool experimental = bindings.validates_records() || bindings.precise_damage() ||
+                              bindings.full_seed_hitchance();
+    if (!experimental && (context_flags & 0x10U) && frame.weapon_id_d8 == 64 && (frame.flags & 0x40U)) {
         batch.candidates[0]->primary.chance = 1.0f;
         return {batch.candidates[0], 0};
     }
     for (std::size_t ordinal = 0; ordinal != batch.count; ++ordinal) {
         auto& candidate = *batch.candidates[ordinal];
         float chance = 1.0f;
-        if (context_flags & 0x10U) {
+        if (experimental || (context_flags & 0x10U)) {
             const auto& evaluation = acquisition_evaluation_for(storage, candidate);
             const auto evaluate = [&] {
                 return evaluate_final_target(frame, state, candidate, evaluation, context_flags,

@@ -119,9 +119,7 @@ void predict_stop(PreambleState& state, PreambleResult& preamble, AcquisitionSto
         float chance = 1.0f;
         TargetFrameBindings after_scan(b.prediction, b.scanner, frame, b.preamble.prediction_time,
                                        b.preamble.scheduler_flags);
-        const FinalTargetContextBindings final{after_scan.scanner,
-                                               b.final_target.current_bone_counter,
-                                               b.final_target.settings_menu, b.final_target.jobs};
+        const auto final = b.final_target.with_scan(after_scan.scanner);
         if (evaluate_final_target(frame, state, candidate, evaluation, state.flags, final,
                                   chance)) {
             state.flags |= 0x180U;

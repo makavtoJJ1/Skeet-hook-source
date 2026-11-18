@@ -1,8 +1,9 @@
 #include "skeet/lagcomp/history_selection.hpp"
 #include "skeet/lagcomp/live_record_attachments.hpp"
+#include "skeet/lagcomp/record_validity.hpp"
 #include "skeet/rage/targeting.hpp"
 #include "skeet/movement/extrapolation.hpp"
-#include "skeet/animation/record_pose_scope.hpp"
+#include "skeet/movement/extrapolation_model.hpp"
 #include "skeet/client/command_orchestrator.hpp"
 #include <bit>
 #include <cmath>
@@ -84,7 +85,13 @@ bool select_target_history_record(
                                                          options, destination, output_flags);
     if (!choice.source)
         return false;
-    const auto plan = live_plan(owner.history, choice.ordinal, options, entity.interval, budget);
+    if (extrapolation.validate_record &&
+        (!record_geometry_valid(*choice.source) ||
+         record_precedes_discontinuity(owner.history, choice.source->header.simulation_tick)))
+        return false;
+    const bool rebuild_pose = bool(extrapolation.rebuild_pose);
+    const auto plan = rebuild_pose ? ExtrapolationPlan{}
+                                   : live_plan(owner.history, choice.ordinal, options, entity.interval, budget);
     const HistoryTickTiming timing{bindings.current_time,
                                    read<float>(&frame, 0x198),
                                    bindings.interpolation,
@@ -98,13 +105,22 @@ bool select_target_history_record(
             owner.history, choice.ordinal, *choice.source, requested_tick, plan.ticks, window)) {
         interpolate_history_record(
             destination, *choice.source, *older,
-            float(extrapolation.movement.rework ? window.last : requested_tick) * entity.interval,
-            entity.interval, bindings.matrix_scratch, output_flags, bindings.rotation);
+            float(requested_tick) * entity.interval,
+            entity.interval, bindings.matrix_scratch, output_flags, bindings.rotation,
+            bindings.use_captured_endpoint_pose());
         effective_tick = window.last;
     }
     const bool had_alternatives = (choice.source->header.flags & 0x80u) != 0;
-    if ((options & 1u) && !choice.ordinal && owner.history.count > 1) {
-        if (plan.ticks > 0 && !extrapolation.movement.rework) {
+    if (rebuild_pose && effective_tick > choice.source->header.simulation_tick) {
+        const auto ticks = std::int64_t(effective_tick) - choice.source->header.simulation_tick;
+        if (!(options & 1u) || choice.ordinal || ticks > maximum_pose_extrapolation_ticks ||
+            ticks > client::query_command_budget(budget) ||
+            extrapolate_lag_record(player, owner, destination, std::int32_t(ticks),
+                                    extrapolation.movement, movement, true) != ticks)
+            return false;
+        output_flags |= 0x20u;
+    } else if (!rebuild_pose && (options & 1u) && !choice.ordinal && owner.history.count > 1) {
+        if (plan.ticks > 0) {
             const auto result = model_alternative_history_record(frame, player, owner, destination,
                                                                  plan.ticks, bindings.alternative);
             if (result < 0)
@@ -128,23 +144,30 @@ bool select_target_history_record(
     }
     if (output_flags & 0x60u) {
         destination.header.field_00 = 0;
-        animation::RecordPoseScope pose(player, destination, bones, extrapolation.movement.rework);
-        if (!pose.valid())
-            return false;
         build_extrapolated_record_matrices(player, destination, bones,
-                                           extrapolation.attachments.scratch);
-        if (had_alternatives && !(output_flags & 0x40u)) {
+                                           extrapolation.attachments.scratch,
+                                           rebuild_pose, entity.interval);
+        if (rebuild_pose) {
+            if (!(destination.header.flags & 4u))
+                return false;
+        } else if (had_alternatives && !(output_flags & 0x40u)) {
             const auto input = capture_record_hypothesis_input(player, owner, destination, entity);
-            resolver_runtime::build_hypotheses(destination, input, player, bones,
-                                               extrapolation.movement.rework);
+            resolver_runtime::build_hypotheses(destination, input, player, bones);
         }
     }
-    if (extrapolation.movement.rework && !(destination.header.flags & 4U))
-        return false;
     auto preparation = extrapolation.preparation;
     preparation.current_timing = &timing;
     refresh_record_attachments(extrapolation.players, player, destination, preparation,
-                               extrapolation.attachments, bones);
+                               extrapolation.attachments, bones, rebuild_pose && (output_flags & 0x20u));
+    if (rebuild_pose && (output_flags & 0x20u)) {
+        if (!record_geometry_valid(destination))
+            return false;
+        if (predicted_ticks)
+            *predicted_ticks = subtract(destination.header.simulation_tick, choice.source->header.simulation_tick);
+    }
+    if (extrapolation.validate_record &&
+        (!record_time_valid(destination, timing) || !record_geometry_valid(destination)))
+        return false;
     if (selected_source && destination.header.field_00)
         *selected_source = choice.source;
     return true;

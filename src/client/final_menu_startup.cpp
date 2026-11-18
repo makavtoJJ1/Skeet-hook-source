@@ -125,19 +125,21 @@ void FinalMenuStartupTail::initialize() {
     // The window's first DPI pass precedes tab construction. Initialize the
     // completed control tree even when the saved scale is still 100%.
     window_.menu_data().dpi.refresh(true);
+    auto& window = window_.window();
+    if (restored.records[4] && restored.records[5])
+        window.restore_size({persistent.menu_width, persistent.menu_height}, {});
     if (restored.records[8])
         restore_saved_layout(menu, persistent.menu_controls);
     settings_.runtime().previous_dpi_scale = values.dpi_scale;
     settings_.runtime().previous_lock_layout = values.lock_layout;
     capture_startup_configuration_baseline(storage_);
-    auto& window = window_.window();
-    const auto& screen = renderer_.renderer().backend();
-    // Center each launch in the actual game viewport. A captured X coordinate
-    // or a persisted desktop position from another resolution is not a valid
-    // placement for the current render target.
-    window.position = {(screen.screen_width - window.geometry.size.x) / 2,
-                       (screen.screen_height - window.geometry.size.y) / 2};
+    // Startup can run while the game is minimized or changing video mode.
+    // Place the menu on the HUD thread once its actual client area is known.
+    window.startup_placement_pending = true;
     menu.initialize_renderer_resources(renderer_.renderer());
+    window.resize_finished = {&configuration_.persistence(), [](void* context) {
+                                  static_cast<SettingsPersistence*>(context)->persist();
+                              }};
     complete_ = true;
 }
 } //namespace skeet::client

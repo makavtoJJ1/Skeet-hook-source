@@ -1,4 +1,5 @@
 #include "skeet/menu/rage_menu.hpp"
+#include "skeet/rage/settings.hpp"
 #include "config_binding.hpp"
 #include <algorithm>
 
@@ -15,7 +16,11 @@ constexpr Requirement requirements[] = {
     {0x2B385DC7, ConfigType::integer}, {0x141C9037, ConfigType::boolean},
     {0xEC178029, ConfigType::hotkey},  {0x4F67FC33, ConfigType::integer},
     {0xC9FCBE4B, ConfigType::color},   {0x4CB8E4AA, ConfigType::integer},
-    {0xD2E84B61, ConfigType::boolean}, {0xD2E84B62, ConfigType::boolean},
+    {rage::experimental_rage_hash, ConfigType::boolean},
+    {rage::experimental_rage_option_hashes[std::size_t(rage::ExperimentalRageOption::animation)],
+     ConfigType::boolean},
+    {rage::experimental_rage_option_hashes[std::size_t(rage::ExperimentalRageOption::extrapolated_pose)],
+     ConfigType::boolean},
 };
 }
 RageOtherMenu::RageOtherMenu(Tab& tab, ConfigRegistries& settings, WidgetIdentities& identities)
@@ -23,8 +28,8 @@ RageOtherMenu::RageOtherMenu(Tab& tab, ConfigRegistries& settings, WidgetIdentit
     require_settings(settings, requirements);
     tab.categories.push_back(&category_); //43487B42, before the first bound control.
     category_.movable = category_.resizable = false;
-    storage_.reserve(14);
-    bindings_.reserve(19);
+    storage_.reserve(14 + experimental_links_.size());
+    bindings_.reserve(19 + experimental_links_.size());
     auto checkbox = [&](std::uint32_t hash, std::u16string_view label) -> Checkbox& {
         return add<Checkbox>(category_, hash, label, value<BooleanConfig>(settings, hash),
                              identities);
@@ -61,12 +66,17 @@ RageOtherMenu::RageOtherMenu(Tab& tab, ConfigRegistries& settings, WidgetIdentit
     mitigations.add_option("Disable hitbox: feet", 0x10);
     mitigations.add_option("Lower hit chance precision", 0x40);
     mitigations.add_option("Limit targets per tick", 0x80);
-    auto& rework = checkbox(0xD2E84B61, u"Extrapolation rework");
-    rework.color = 0xBB82F0F0;
-    auto& visualize = checkbox(0xD2E84B62, u"Visualize");
-    visualize.set_visible(*rework.value != 0);
-    extrapolation_dependency_ = {&visualize, &rework.tied};
-    rework.tied.next = &extrapolation_dependency_;
+    auto& experimental = checkbox(rage::experimental_rage_hash, u"Experimental RAGE");
+    experimental.color = 0xBB82F0F0;
+    using Option = rage::ExperimentalRageOption;
+    constexpr auto& hashes = rage::experimental_rage_option_hashes;
+    auto& animation = checkbox(hashes[std::size_t(Option::animation)], u"Animation rebuild");
+    auto& extrapolation = checkbox(hashes[std::size_t(Option::extrapolated_pose)],
+                                   u"Extrapolated pose rebuild");
+    experimental_links_[0] = {&animation, &experimental_links_[1]};
+    experimental_links_[1] = {&extrapolation, &experimental.tied};
+    experimental.tied.next = &experimental_links_.front();
+    experimental.config_loaded();
 }
 RageOtherMenu::~RageOtherMenu() {
     std::erase(tab_.categories, &category_);

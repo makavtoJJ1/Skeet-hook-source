@@ -2,6 +2,8 @@
 #include "skeet/rage/acquisition.hpp"
 #include "skeet/client/command_orchestrator.hpp"
 #include "skeet/engine/interface_call.hpp"
+#include "skeet/lagcomp/record_validity.hpp"
+#include "skeet/movement/extrapolation_model.hpp"
 #include <algorithm>
 #include <bit>
 #include <cstring>
@@ -74,6 +76,12 @@ struct Window {
     float low, high;
     std::int32_t corrected, upper;
 };
+lagcomp::HistoryTickTiming candidate_timing(const client::CommandFrame& frame,
+                                            const RecordCandidateBindings& bindings) noexcept {
+    return {bindings.current_time, field<float>(&frame, 0x198), bindings.interpolation,
+            bindings.interval, bindings.maximum_unlag_ms, field<std::int32_t>(&frame, 0xd4),
+            integer(frame.field_18c)};
+}
 Window candidate_window(const client::CommandFrame& frame,
                         const RecordCandidateBindings& bindings) noexcept {
     const float maximum = converted(bindings.maximum_unlag_ms) * 0.001F;
@@ -81,11 +89,7 @@ Window candidate_window(const client::CommandFrame& frame,
         minimum_number(field<float>(&frame, 0x198) + bindings.interpolation, maximum);
     const float low = ((bindings.current_time - delay) - 0.2F) / bindings.interval;
     const float high = ((bindings.current_time - delay) + 0.2F) / bindings.interval;
-    const lagcomp::HistoryTickTiming timing{
-        bindings.current_time,   field<float>(&frame, 0x198), bindings.interpolation,
-        bindings.interval,       bindings.maximum_unlag_ms,   field<std::int32_t>(&frame, 0xd4),
-        integer(frame.field_18c)};
-    return {low, high, lagcomp::history_tick_window(timing).corrected,
+    return {low, high, lagcomp::history_tick_window(candidate_timing(frame, bindings)).corrected,
             add(field<std::int32_t>(&frame, 0x144), integer(frame.field_18c))};
 }
 std::int32_t extrapolated_tick(const client::CommandFrame& frame, void* target,
@@ -275,16 +279,21 @@ void append_target_record_ticks(const client::CommandFrame& frame, void* target,
     const auto raw_first = add(ceiling_tick(window.low), 1);
     const auto first = std::max(window.corrected, raw_first);
     const auto last = std::min(window.upper, sub(floor_tick(window.high), 1));
+    const bool validate = bool(bindings.validate_record);
+    const auto timing = candidate_timing(frame, bindings);
     std::uint32_t mask = 0;
     bool extrapolate = false;
     auto previous = player.native.cached_origin;
     for (std::uint32_t age = 0; age < ring.count; ++age) {
-        const auto& record = ring.at(age).header;
+        const auto& sample = ring.at(age);
+        const auto& record = sample.header;
+        if (validate && lagcomp::record_precedes_discontinuity(ring, record.simulation_tick))
+            break;
         const auto& origin = record.origin;
         const float dx = origin[0] - previous[0], dy = origin[1] - previous[1],
                     dz = origin[2] - previous[2];
         if ((dy * dy + dx * dx) + dz * dz > 4096.0F) {
-            if (!mask)
+            if (!validate && !mask)
                 mask = 1;
             break;
         }
@@ -294,13 +303,21 @@ void append_target_record_ticks(const client::CommandFrame& frame, void* target,
                     extrapolate = true;
                 break;
             }
-            mask |= 1U << (age & 31U);
+            if (!validate || (lagcomp::record_time_valid(sample, timing) &&
+                              lagcomp::record_geometry_valid(sample)))
+                mask |= 1U << (age & 31U);
         }
         previous = origin;
     }
     if (!mask) {
         if (!extrapolate || ring.count < 2 || (ring.at(0).header.flags & 0x200U))
             return;
+        if (bindings.rebuild_pose) {
+            const auto ticks = std::int64_t(first) - ring.at(0).header.simulation_tick;
+            if (ticks > 0 && ticks <= maximum_pose_extrapolation_ticks && first <= last)
+                output.push_back(first);
+            return;
+        }
         const auto tick = extrapolated_tick(frame, target, player, bindings, window);
         if (tick != -1)
             output.push_back(tick);

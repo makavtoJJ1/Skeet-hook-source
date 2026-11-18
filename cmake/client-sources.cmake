@@ -73,6 +73,7 @@ target_sources(skeet_core PRIVATE
   src/rage_policy.cpp
   src/rage_selection.cpp
   src/rage_damage.cpp
+  src/rage/damage_model.cpp
   src/rage_geometry.cpp
   src/rage_hitchance.cpp
   src/rage_shot.cpp
@@ -138,13 +139,13 @@ target_sources(skeet_core PRIVATE
   src/esp/entity_overlay.cpp
   src/esp/player_runtime.cpp
   src/esp/hitbox_highlight.cpp
-  src/esp/extrapolation_preview.cpp
   src/esp/grenade_prediction.cpp
   src/esp/grenade_prediction_trace.cpp
   src/esp/grenade_prediction_collision.cpp
   src/esp/grenade_prediction_draw.cpp
   src/esp/grenade_prediction_entity.cpp
   src/esp/grenade_prediction_launch.cpp
+  src/esp/grenade_compensation.cpp
   src/esp/grenade_prediction_warning.cpp
   src/events/hit_log.cpp
   src/events/hit_marker.cpp
@@ -179,6 +180,7 @@ target_sources(skeet_core PRIVATE
   src/misc/clan_tag.cpp
   src/misc/ping_spike.cpp
   src/misc/settings_runtime.cpp
+  src/misc/hidden_cvars.cpp
   src/misc/unload.cpp
   src/misc/unload_state.cpp
   src/movement/air_strafe.cpp
@@ -208,6 +210,7 @@ target_sources(skeet_core PRIVATE
   src/render/icon_cache.cpp
   src/render/frame_runtime.cpp
   src/resolver_runtime/next_attempt.cpp
+  src/resolver_runtime/jitter.cpp
   src/resolver_runtime/environment_score.cpp
   src/resolver_runtime/environment_probe.cpp
   src/rage/point_penetration.cpp
@@ -579,6 +582,8 @@ target_sources(skeet_core PRIVATE
   src/rage/initialization.cpp
   src/rage/reset.cpp
   src/rage/spread_miss_log.cpp
+  src/rage/shot_log.cpp
+  src/rage/jitter_log.cpp
   src/resolver_runtime/live_build.cpp
   src/script/command_owner.cpp
   src/skins/command.cpp

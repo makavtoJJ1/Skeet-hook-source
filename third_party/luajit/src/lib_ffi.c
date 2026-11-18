@@ -82,7 +82,8 @@ static void *ffi_checkptr(lua_State *L, int narg, CTypeID id)
   void *p;
   if (o >= L->top)
     lj_err_arg(L, narg, LJ_ERR_NOVAL);
-  lj_cconv_ct_tv(cts, ctype_get(cts, id), (uint8_t *)&p, o, CCF_ARG(narg));
+  lj_cconv_ct_tv(cts, ctype_get(cts, id), (uint8_t *)&p, o,
+                 CCF_ARG(narg) | CCF_SAFEWRITE);
   return p;
 }
 
@@ -95,7 +96,7 @@ static int32_t ffi_checkint(lua_State *L, int narg)
   if (o >= L->top)
     lj_err_arg(L, narg, LJ_ERR_NOVAL);
   lj_cconv_ct_tv(cts, ctype_get(cts, CTID_INT32), (uint8_t *)&i, o,
-		 CCF_ARG(narg));
+ 		 CCF_ARG(narg) | CCF_SAFEWRITE);
   return i;
 }
 
@@ -538,7 +539,7 @@ LJLIB_CF(ffi_cast)	LJLIB_REC(ffi_new)
     lj_err_arg(L, 1, LJ_ERR_FFI_INVTYPE);
   if (!(tviscdata(o) && cdataV(o)->ctypeid == id)) {
     GCcdata *cd = lj_cdata_new(cts, id, d->size);
-    lj_cconv_ct_tv(cts, d, cdataptr(cd), o, CCF_CAST);
+    lj_cconv_ct_tv(cts, d, cdataptr(cd), o, CCF_CAST | CCF_SAFEWRITE);
     setcdataV(L, o, cd);
     lj_gc_check(L);
   }

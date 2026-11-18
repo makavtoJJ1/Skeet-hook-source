@@ -1,4 +1,5 @@
 #include "skeet/rage/runtime_owner.hpp"
+#include "skeet/rage/damage_model.hpp"
 #include "skeet/rage/post_firing.hpp"
 #include "skeet/rage/final_target_context.hpp"
 #include "skeet/rage/shot_publication.hpp"
@@ -73,15 +74,18 @@ template <class T> T& pointed(ClientRuntimeStorage& s, std::uint32_t identity) {
         throw std::invalid_argument("RAGE requires its actual published engine alias");
     return *pointer;
 }
-bool convar_boolean(const void* variable) {
+std::int32_t convar_integer(const void* variable) {
     for (;;) {
         const auto parent = read<const void*>(variable, 0x1C);
         if (parent == variable)
             break;
         variable = parent;
     }
-    return read<std::uint32_t>(variable, 0x30) !=
-           std::uint32_t(reinterpret_cast<std::uintptr_t>(variable));
+    return std::bit_cast<std::int32_t>(read<std::uint32_t>(variable, 0x30) ^
+           std::uint32_t(reinterpret_cast<std::uintptr_t>(variable)));
+}
+bool convar_boolean(const void* variable) {
+    return convar_integer(variable) != 0;
 }
 engine::OwnerRegistryBinding registry(ClientRuntimeStorage& s, std::uint32_t identity) {
     return {s.owner_registries().at(identity), s.memory()};
@@ -165,6 +169,7 @@ struct RuntimeOwner::Data final : CommandSource {
     InputBitmap input;
     ui::SettingsMenuValues menu;
     PreambleState state_{};
+    DamageRulesCache damage_rules;
     AcquisitionStorage acquisition_{};
     std::int32_t shot_index_ = 0;
     esp::HitboxHighlightState highlight_{};
@@ -216,8 +221,7 @@ struct RuntimeOwner::Data final : CommandSource {
                   *this,
                   {lua.bridge(), c.rage_settings().global, c.rage_settings().aimbot,
                    c.other_esp_settings().feature_indicators, input, visual_owner.indicators(),
-                   c.player_esp_settings().aimbot_visualization, highlight_, highlight_context,
-                   &acquisition_.extrapolation_preview},
+                   c.player_esp_settings().aimbot_visualization, highlight_, highlight_context},
                   {s.data().native_cell<void*>(0x4346A514u),
                    s.data().native_cell<void*>(0x4346A890u),
                    s.data().native_cell<void*>(0x4346A614u),
@@ -305,6 +309,7 @@ struct RuntimeOwner::Data::Frame {
     TargetPreparationBindings target_preparation;
     RecordCandidateBindings candidates;
     std::array<RageSpreadSample, 32> samples;
+    ExperimentalDamageContext damage_context;
     ScanContext scanner;
     BodyAimProbeContext body_probe;
     TargetPredictionBindings prediction;
@@ -416,11 +421,11 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
                              d.storage.data().native_cell<float*>(0x4346A338u),
                              d.storage.data().native_cell<std::uint8_t*>(0x43467B24u),
                              d.history.entity_runtime().set_absolute_angles,
-                             d.storage.data().native_cell<void*>(0x43467204u),
-                             d.configuration.rage_settings().global.extrapolation_rework.value !=
-                                 0},
+                             d.storage.data().native_cell<void*>(0x43467204u)},
       extrapolation{d.history.players().cache(), preparation, attachments, d.animation.bones(),
-                    movement_extrapolation,      std::nullopt},
+                    movement_extrapolation, std::nullopt,
+                    d.configuration.rage_settings().global.experimental(ExperimentalRageOption::records),
+                    d.configuration.rage_settings().global.experimental(ExperimentalRageOption::extrapolated_pose)},
       alternative{d.history.entity_runtime().offsets,
                   {std::uint32_t(field(d.storage, 0x36375C23u)),
                    std::uint32_t(field(d.storage, 0x4E66BB34u)),
@@ -461,7 +466,11 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
               inputs.history_interpolation,
               pointed<float>(d.storage, 0x43467EB8u),
               selection_globals.interpolation,
-              d.menu.maximum_unlag},
+              d.menu.maximum_unlag,
+              {&d.configuration.rage_settings().global.jitter_fix.value,
+               &d.configuration.rage_settings().global.experimental_rage.value},
+              d.configuration.rage_settings().global.experimental(ExperimentalRageOption::animation),
+              d.configuration.rage_settings().global.experimental(ExperimentalRageOption::resolver)},
       preamble{
           d.configuration.rage_settings().global,
           d.configuration.rage_settings().aimbot,
@@ -508,8 +517,17 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
                  selection_globals.interpolation,
                  d.menu.maximum_unlag,
                  std::nullopt,
-                 &d.capture_owner.budget()},
+                 &d.capture_owner.budget(),
+                 extrapolation.validate_record,
+                 extrapolation.rebuild_pose},
       samples(hitchance_spread_samples(d.state_.spread)),
+      damage_context(d.damage_rules.capture(
+          bool(preamble.settings.experimental(ExperimentalRageOption::damage)),
+          d.storage.data().native_cell<void*>(0x4346A87Cu),
+          reinterpret_cast<const void*>(std::uintptr_t(frame.weapon_data_address)),
+          field(d.storage, 0xEAA57C2Cu),
+          preamble.settings.experimental(ExperimentalRageOption::damage)
+              ? convar_integer(d.history.game_type()) : 0)),
       scanner{d.scene.queries().ballistics(),
               targeting,
               BallisticEntity(reinterpret_cast<std::uintptr_t>(player)),
@@ -537,7 +555,7 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
               {d.engine.variables.at(0x43467C3Cu), d.engine.variables.at(0x43467084u),
                d.engine.variables.at(0x43468C90u), d.history.teammates_are_enemies()},
               d.storage.data().native_cell<void**>(0x43475B90u),
-              trace_entities},
+              trace_entities, &damage_context},
       body_probe{d.scene.queries().movement(),
                  scanner.ballistics,
                  scanner.source,
@@ -586,7 +604,7 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
                pointed<std::int32_t>(d.storage, 0x43469300u),
                d.jobs},
       final_target{scanner, d.storage.data().native_cell<std::uint32_t*>(0x43469060u), d.menu,
-                   &d.jobs},
+                   &d.jobs, &history, &preamble},
       readiness{
           d.history.players().cache(),
           d.storage.data().native_cell<void*>(0x4346A514u),
@@ -673,7 +691,10 @@ RuntimeOwner::Data::Frame::Frame(Data& d, client::CommandFrame& frame, void* pla
               d.storage.data().native_cell<float*>(0x43467EB8u),
               d.storage.data().native_cell<float*>(0x4346A338u),
               &preamble.scheduler_flags,
-              attempts},
+              attempts,
+              nullptr,
+              {&d.configuration.rage_settings().global.jitter_fix.value,
+               &d.configuration.rage_settings().global.experimental_rage.value}},
       shot_models{d.configuration.colored_model_settings(),
                   targeting.entity_list,
                   d.storage.data().native_cell<void*>(0x4346A614u),

@@ -67,7 +67,8 @@ void HistoryOwnerRuntime::update_environment() {
         bindings.entity.previous_command,
         bindings.entity.current_command,
         bindings.globals.local_origin,
-        bindings.environment.origin_offset};
+        bindings.environment.origin_offset,
+        bindings.configuration.resolver_reworked()};
     //The common live implementation retains the canonical owner/ring. Its
     //world probe precedes the fresh studio/set/hitbox0/3 reads.
     resolver_runtime::update_environment_entry(owner, input, bindings.resolver.environment);

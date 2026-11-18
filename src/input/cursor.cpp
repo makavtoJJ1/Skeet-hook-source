@@ -49,6 +49,7 @@ void Runtime::toggle_menu() { // 0x4338579D
     for (auto* window = windows; window; window = window->next) {
         if (!(window->input.mouse_flags & 1))
             continue;
+        window->finish_resize();
         window->transition_started = window->read_ticks(window->clock_context);
         window->transition_state = 1;
     }

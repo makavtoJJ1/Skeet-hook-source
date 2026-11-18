@@ -29,8 +29,11 @@ void initialize_global_settings(ConfigRegistries& r, GlobalSettings& c) noexcept
     initialize_boolean_config(d, c.reduce_aim_step, 0x4034958C);
     initialize_integer_config(d, c.aim_step_limit, 0x20E889DE, 15);
     initialize_boolean_config(d, c.pattern_recoil_correction, 0xA434F7C7);
-    initialize_boolean_config(d, c.extrapolation_rework, 0xD2E84B61);
-    initialize_boolean_config(d, c.extrapolation_visualize, 0xD2E84B62);
+    initialize_boolean_config(d, c.experimental_rage, experimental_rage_hash);
+    for (const auto option : active_experimental_rage_options) {
+        const auto i = std::size_t(option);
+        initialize_boolean_config(d, c.experimental_options[i], experimental_rage_option_hashes[i]);
+    }
 }
 void initialize_aimbot_settings(ConfigRegistries& r, AimbotSettings& c) noexcept {
     auto& d = r.descriptors;

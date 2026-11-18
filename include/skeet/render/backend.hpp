@@ -126,6 +126,9 @@ private:
     HRESULT lock_buffer();
     void draw(std::uint32_t count, std::uint32_t first);
     void vertex(float x, float y, std::uint32_t color, float u = 0.0f, float v = 0.0f);
+    bool quad(IDirect3DBaseTexture9* texture, float left, float top, float right, float bottom,
+              const std::array<std::uint32_t, 4>& colors,
+              float u0 = 0, float v0 = 0, float u1 = 0, float v1 = 0);
     void colored(std::span<const ColoredVertex>, D3DPRIMITIVETYPE, bool connected);
     IDirect3DTexture9* font_texture(FontLink&) const noexcept;
     IDirect3DDevice9* device_;

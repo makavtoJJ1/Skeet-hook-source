@@ -165,7 +165,8 @@ native_fix_animations_bindings(RuntimeOwner& bones, client::ConfigurationRuntime
             data.native_cell<void*>(0x43467204u),
             storage.memory(),
             data.native_cell<AnimationLayerProxy>(0x43476974u),
-            opacity};
+            opacity,
+            settings.rage_settings().global.experimental(rage::ExperimentalRageOption::animation)};
 }
 FixAnimationBackupBindings
 native_fix_animation_backup_bindings(RuntimeOwner& bones, const FixAnimationsBindings& bindings) {

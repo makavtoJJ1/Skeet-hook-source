@@ -5,6 +5,9 @@
 #include "skeet/rage/aim_fire_event.hpp"
 #include "skeet/rage/pending_shot_publication.hpp"
 #include "skeet/rage/shot_diagnostics.hpp"
+#include "skeet/rage/jitter_log.hpp"
+#include "skeet/rage/shot_log.hpp"
+#include "skeet/rage/feedback_owner.hpp"
 #include "skeet/engine/interface_call.hpp"
 #include <bit>
 #include <cmath>
@@ -44,15 +47,22 @@ void publish_shot(PreambleState&, PreambleResult& preamble, AcquisitionStorage& 
     auto& evaluation = storage.evaluations[std::size_t(&selected - storage.candidates.data())];
     auto* target =
         engine::invoke<void*>(b.movement.targeting.entity_list, 3, selected.entity_index);
+    std::int32_t diagnostic_id = 0;
+    bool pending = false;
     if (target) {
         if (!frame.field_1a0)
             capture_shot_diagnostics(frame, local, target, b.diagnostics);
         const auto index = b.shot_index % 150;
+        diagnostic_id = index;
         b.shot_index = sum(b.shot_index, 1);
         dispatch_aim_fire_event(b.scripts, b.players, frame, selected, evaluation, index);
-        publish_pending_shot(frame, synchronize_evaluation_state(selected, evaluation), index,
-                             b.pending_shots,
-                             evaluation.extrapolated ? evaluation.extrapolation_ticks : 0);
+        pending = publish_pending_shot(
+            frame, synchronize_evaluation_state(selected, evaluation), index, b.pending_shots);
+        if (b.pending_shots.jitter_fix) {
+            if (const auto* feedback = feedback_owner_runtime(b.pending_shots.active))
+                log_jitter_fire(*b.players.get(selected.entity_index), feedback->normal_log,
+                                selected, evaluation, index, frame.command_number_ac, pending);
+        }
         publish_accepted_shot_model(frame, selected, evaluation.record, b.shot_models);
         if (frame.field_1d4 == 1 && selected.primary.damage < selected.health) {
             const RageVector delta{selected.primary.position[0] - frame.origin_dc[0],
@@ -89,6 +99,10 @@ void publish_shot(PreambleState&, PreambleResult& preamble, AcquisitionStorage& 
             sum(std::bit_cast<std::int32_t>(frame.field_18c), read<std::int32_t>(&frame, 0x144)))
             command.tick = corrected;
     }
+    if (target)
+        if (const auto* feedback = feedback_owner_runtime(b.pending_shots.active))
+            log_shot_fire(feedback->spread_log_settings, feedback->normal_log, frame, command,
+                          selected, evaluation, diagnostic_id, pending);
     auto& player = b.players.get(selected.entity_index)->native;
     write(&player, 0xA6, std::uint16_t(read<std::uint16_t>(&player, 0xA6) + 1u));
 }
@@ -127,8 +141,7 @@ PreambleTailEntry continue_after_target_firing(PreambleState& state, PreambleRes
         float chance = 0.0f;
         TargetFrameBindings current(b.prediction, b.scanner, frame, b.preamble.prediction_time,
                                     b.preamble.scheduler_flags);
-        const FinalTargetContextBindings final{current.scanner, b.final_target.current_bone_counter,
-                                               b.final_target.settings_menu, b.final_target.jobs};
+        const auto final = b.final_target.with_scan(current.scanner);
         if (evaluate_final_target(frame, state, *leading, *evaluation, state.flags, final, chance))
             state.flags |= 0x180U;
         state.flags &= ~8U;

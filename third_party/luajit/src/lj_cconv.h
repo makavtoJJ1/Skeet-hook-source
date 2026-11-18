@@ -48,6 +48,12 @@ static LJ_AINLINE uint32_t cconv_idx(CTInfo info)
 #define CCF_FROMTV	0x00000002u
 #define CCF_SAME	0x00000004u
 #define CCF_IGNQUAL	0x00000008u
+/* Valid only for this conversion and its bounded sub-conversions. These bits
+** describe VM-owned storage or a span checked by the immediate caller, never
+** a cached permission for an external pointer's pointee.
+*/
+#define CCF_SAFEREAD	0x00000010u
+#define CCF_SAFEWRITE	0x00000020u
 
 #define CCF_ARG_SHIFT	8
 #define CCF_ARG(n)	((n) << CCF_ARG_SHIFT)

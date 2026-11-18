@@ -65,7 +65,7 @@ void SettingsRecordKeys::set(std::size_t index, ConfigRecordKey key) noexcept {
 SettingsPersistenceState::SettingsPersistenceState()
     : owned_(std::make_unique<SettingsPersistenceValues>()), global_value(owned_->global_value),
       menu_binding(owned_->menu_binding), input_mode(owned_->input_mode),
-      dpi_scale(owned_->dpi_scale), menu_x(owned_->menu_x), menu_y(owned_->menu_y),
+      dpi_scale(owned_->dpi_scale), menu_width(owned_->menu_width), menu_height(owned_->menu_height),
       script_hashes(owned_->script_hashes), optional_value(owned_->optional_value),
       menu_controls(owned_->menu_controls), flag(owned_->flag) {}
 SettingsPersistenceState::SettingsPersistenceState(std::byte* owner, std::size_t size)
@@ -74,8 +74,8 @@ SettingsPersistenceState::SettingsPersistenceState(std::byte* owner, std::size_t
       menu_binding(native_value<HotkeyBinding>(native_owner_, size, 0x34)),
       input_mode(native_value<std::int32_t>(native_owner_, size, 0x4C)),
       dpi_scale(native_value<std::int32_t>(native_owner_, size, 0x60)),
-      menu_x(native_value<std::int32_t>(native_owner_, size, 0x74)),
-      menu_y(native_value<std::int32_t>(native_owner_, size, 0x88)),
+      menu_width(native_value<std::int32_t>(native_owner_, size, 0x74)),
+      menu_height(native_value<std::int32_t>(native_owner_, size, 0x88)),
       script_hashes(native_value<std::array<std::uint32_t, 128>>(native_owner_, size, 0x9C)),
       optional_value(native_value<std::uint32_t>(native_owner_, size, 0x2AC)),
       menu_controls(native_value<std::array<std::int32_t, 21>>(native_owner_, size, 0x2C0)),
@@ -127,25 +127,27 @@ bool serialize_settings_snapshot(SettingsPersistenceState& state,
         inputs.menu_key ^ ((state.menu_binding.packed ^ inputs.menu_key) & 3u);
     state.input_mode = inputs.input_mode;
     state.dpi_scale = inputs.dpi_scale;
-    state.menu_x = inputs.menu_x;
-    state.menu_y = inputs.menu_y;
+    state.menu_width = inputs.menu_width;
+    state.menu_height = inputs.menu_height;
     state.menu_controls[0] = 9;
     for (std::size_t i = 0; i < 15; ++i)
         state.menu_controls[i + 1] = inputs.menu_control_values[i];
     state.menu_controls[19] = inputs.menu_control_values[15];
     state.menu_controls[20] = inputs.menu_control_values[16];
-    state.script_hashes.fill(0);
-    std::size_t count = 0;
-    for (const auto& script : inputs.scripts) {
-        const bool starred = !script.name.empty() && script.name.front() == u'*';
-        if (script.selected == starred)
-            continue;
-        const auto hash = script_hash(script.name);
-        if (hash == excluded_script)
-            continue;
-        state.script_hashes[count++] = hash;
-        if (count == state.script_hashes.size())
-            break;
+    if (inputs.capture_scripts) {
+        state.script_hashes.fill(0);
+        std::size_t count = 0;
+        for (const auto& script : inputs.scripts) {
+            const bool starred = !script.name.empty() && script.name.front() == u'*';
+            if (script.selected == starred)
+                continue;
+            const auto hash = script_hash(script.name);
+            if (hash == excluded_script)
+                continue;
+            state.script_hashes[count++] = hash;
+            if (count == state.script_hashes.size())
+                break;
+        }
     }
     state.flag = inputs.flag;
     initialize_config_stream(output);
@@ -153,13 +155,15 @@ bool serialize_settings_snapshot(SettingsPersistenceState& state,
     append_config_record(output, state.record_keys[1], value_bytes(state.menu_binding));
     append_config_record(output, state.record_keys[2], value_bytes(state.input_mode));
     append_config_record(output, state.record_keys[3], value_bytes(state.dpi_scale));
-    append_config_record(output, state.record_keys[4], value_bytes(state.menu_x));
-    append_config_record(output, state.record_keys[5], value_bytes(state.menu_y));
+    append_config_record(output, state.record_keys[4], value_bytes(state.menu_width));
+    append_config_record(output, state.record_keys[5], value_bytes(state.menu_height));
     append_config_record(output, state.record_keys[6], value_bytes(state.script_hashes));
     if (optional_value) {
         state.optional_value = optional_value;
         append_config_record(output, state.record_keys[7], value_bytes(state.optional_value));
     }
+    if (state.startup_preset_hash)
+        append_config_record(output, startup_preset_record, value_bytes(state.startup_preset_hash));
     append_config_record(output, state.record_keys[8], value_bytes(state.menu_controls));
     append_config_record(output, state.record_keys[9], value_bytes(state.flag));
     return true;

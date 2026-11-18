@@ -134,13 +134,9 @@ void Category::reflow() { // 0x433AD23F, typed owning-container entry
         scroll.content_height = add(padding, next_row);
         move_scroll_position(scroll.position, scroll.viewport.y, scroll.content_height, 0);
     }
-    const auto offset = scroll.enabled ? scroll.position : 0;
-    const auto bottom = add(geometry.bounds.height, offset);
-    for (auto* child : std::span(elements)) {
-        const auto child_bottom = add(child->geometry.bounds.y, child->geometry.bounds.height);
-        if (child_bottom < offset || bottom < child_bottom)
-            child->reset_input();
-    }
+    // Native dependencies and Lua can change visibility several times before
+    // a frame is drawn. Cancel clipped input against the presented layout in
+    // draw(), not against these temporary positions.
 }
 void Category::visibility_changed() { // 0x433D08F1
     if (!visible)

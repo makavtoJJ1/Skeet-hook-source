@@ -698,7 +698,7 @@ static int ccall_struct_arg(CCallState *cc, CTState *cts, CType *d, int *rcl,
   GPRArg dp[2];
   dp[0] = dp[1] = 0;
   /* Convert to temp. struct. */
-  lj_cconv_ct_tv(cts, d, (uint8_t *)dp, o, CCF_ARG(narg));
+  lj_cconv_ct_tv(cts, d, (uint8_t *)dp, o, CCF_ARG(narg) | CCF_SAFEWRITE);
   if (ccall_struct_reg(cc, cts, dp, rcl)) {
     /* Register overflow? Pass on stack. */
     MSize nsp = cc->nsp, sz = rcl[1] ? 2*CTSIZE_PTR : CTSIZE_PTR;
@@ -1116,7 +1116,7 @@ static int ccall_set_args(lua_State *L, CTState *cts, CType *ct,
       *(void **)dp = rp;
       dp = rp;
     }
-    lj_cconv_ct_tv(cts, d, (uint8_t *)dp, o, CCF_ARG(narg));
+    lj_cconv_ct_tv(cts, d, (uint8_t *)dp, o, CCF_ARG(narg) | CCF_SAFEWRITE);
     if (ctype_isptr(d->info) &&
         !cdata_checkptr(L, cdata_getptr(dp, d->size), 1, SKEET_FFI_ARGUMENT))
       *unavailable = 1;

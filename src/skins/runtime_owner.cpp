@@ -22,7 +22,7 @@ Settings& require_inputs(client::ClientRuntimeStorage& storage,
     if (&configuration.storage() != &storage || &imports.data != &storage.data())
         throw std::invalid_argument(
             "Skin runtime requires its canonical configuration and data owners");
-    if (!imports.seed_random || !imports.random_integer || !imports.viewmodel_class ||
+    if (!imports.seed_random || !imports.random_integer || !imports.weapon_world_model_class ||
         !imports.knife_class)
         throw std::invalid_argument(
             "Skin runtime requires genuine engine random imports and client class objects");
@@ -153,7 +153,7 @@ struct SkinsRuntimeOwner::Data {
     events::DeathWeaponIconsListener death_listener;
     // The original networkable method returns ClientClass*, represented by a
     // dword in the source runtime. These are actual class-object identities.
-    const std::uint32_t viewmodel_class, knife_class;
+    const std::uint32_t weapon_world_model_class, knife_class;
     client::SkinRuntimeFactoryBindings factories;
     SequenceOwnerBindings sequence_factory;
 
@@ -205,8 +205,8 @@ struct SkinsRuntimeOwner::Data {
           death{cell<void*>(storage, 0x4346A514u), cell<void*>(storage, 0x4346A890u), nullptr},
           death_fields(death_offsets(storage.offsets().globals)), death_icons(settings, sequence),
           death_listener{death_icons, death, death_fields},
-          viewmodel_class(static_cast<std::uint32_t>(
-              reinterpret_cast<std::uintptr_t>(imports.viewmodel_class))),
+          weapon_world_model_class(static_cast<std::uint32_t>(
+              reinterpret_cast<std::uintptr_t>(imports.weapon_world_model_class))),
           knife_class(
               static_cast<std::uint32_t>(reinterpret_cast<std::uintptr_t>(imports.knife_class))),
           factories{storage.configuration(),
@@ -232,7 +232,7 @@ struct SkinsRuntimeOwner::Data {
                            cell<void*>(storage, 0x434683E0u),
                            cell<void*>(storage, 0x4346A890u),
                            cell<void*>(storage, 0x43467198u),
-                           viewmodel_class,
+                           weapon_world_model_class,
                            knife_class,
                            viewmodel_model,
                            death_listener,

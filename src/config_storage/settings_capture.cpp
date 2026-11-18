@@ -34,8 +34,9 @@ SettingsPersistenceInputs MenuSettingsCapture::operator()() const { //433EEC8B
     result.menu_key = menu_key_.binding.packed;
     result.input_mode = lock_layout_;
     result.dpi_scale = dpi_scale_;
-    result.menu_x = window_.position.x;
-    result.menu_y = window_.position.y;
+    const auto size = window_.size_for_persistence();
+    result.menu_width = size.x;
+    result.menu_height = size.y;
 
     std::array<std::int32_t, 21> layout{};
     std::array<std::uint32_t, 2> player_defaults{};
@@ -45,6 +46,9 @@ SettingsPersistenceInputs MenuSettingsCapture::operator()() const { //433EEC8B
     result.menu_control_values[16] = layout[20];
 
     const auto records = scripts_->records();
+    // Lua may be disabled before its directory is discovered. A config/menu
+    // preference must not erase the saved script startup list in that case.
+    result.capture_scripts = !records.empty();
     result.scripts.reserve(records.size());
     for (const auto& record : records)
         result.scripts.push_back({record.name, record.startup != 0});

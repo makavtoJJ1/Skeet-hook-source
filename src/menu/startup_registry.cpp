@@ -116,6 +116,9 @@ std::array<bool, 10> restore_startup_settings_records(SettingsPersistenceState& 
     const auto stream = information.subspan(12, length);
     if (word(stream, 0) != config_stream_magic)
         throw std::invalid_argument("Startup settings stream has an invalid signature");
+    state.startup_preset_hash = 0;
+    if (const auto preset = find_config_record(stream, startup_preset_record))
+        state.startup_preset_hash = word(preset->value, 0);
     auto* const owner = const_cast<std::byte*>(state.native_owner());
     if (!owner)
         throw std::invalid_argument(

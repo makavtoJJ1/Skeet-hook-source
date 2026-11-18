@@ -57,6 +57,9 @@ void SettingsRuntime::allow_custom_events_changed() { // 0x4333D25B
         *(static_cast<std::uint8_t*>(custom_event_state) + 0xA0) = 1;
     previous_custom_events = value;
 }
+void SettingsRuntime::unlock_hidden_cvars_changed() {
+    hidden_cvars.set_enabled(unlock_hidden_cvars && *unlock_hidden_cvars);
+}
 
 void SettingsRuntime::reset_menu_layout() { // 0x43342FF1 with native built-in block
     if (default_layout[0] == 9) {

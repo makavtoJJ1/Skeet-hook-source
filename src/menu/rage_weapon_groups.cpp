@@ -22,4 +22,18 @@ void switch_rage_weapon_group(RageWeaponGroupState& state, const std::uint32_t* 
                          state.baseline_b.bytes());
     state.last_group = selected;
 }
+void reload_rage_weapon_groups_from_preset(RageWeaponGroupState& state,
+                                           const std::uint32_t& selected, bool initialize_global) {
+    state.last_group = UINT32_MAX;
+    if (selected >= state.groups.size())
+        return;
+    if (initialize_global && state.groups[0]->value.empty()) {
+        ConfigBytes changes;
+        save_category_config(state.window, state.registry, "rage", "aimbot", changes,
+                             state.baseline_a.bytes(), state.baseline_b.bytes());
+        if (changes.size() > 12)
+            state.groups[0]->value = std::move(changes);
+    }
+    switch_rage_weapon_group(state, &selected);
+}
 }

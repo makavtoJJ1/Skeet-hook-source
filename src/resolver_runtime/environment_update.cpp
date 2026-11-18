@@ -70,6 +70,7 @@ OwnerView view(client::PlayerState& owner) noexcept {
 struct CapturedRequest {
     const EnvironmentUpdateInput& input;
     const LagRecordHistory& records;
+    bool strict() const noexcept { return input.strict; }
     LagRecordHistory history() const noexcept {
         return records;
     }
@@ -97,6 +98,7 @@ struct LiveRequest {
     client::PlayerState& owner;
     const EnvironmentLiveUpdateInput& input;
     std::array<EnvironmentCapsule, 2> capsules;
+    bool strict() const noexcept { return input.strict; }
     LagRecordHistory history() const noexcept {
         return {owner.history.records, owner.history.first, owner.history.count};
     }
@@ -132,7 +134,10 @@ struct LiveRequest {
             std::uint32_t(read<std::int32_t>(input.target, fields.hitbox_set_c2b6fb10)) * 12u +
             std::uint32_t(read<std::int32_t>(header, 0xB0));
         const auto* set = header + std::bit_cast<std::int32_t>(relative);
-        if (!set || read<std::int32_t>(set, 4) == 0)
+        if (!set)
+            return nullptr;
+        const auto count = read<std::int32_t>(set, 4);
+        if (count == 0 || (input.strict && count < 4))
             return nullptr;
         for (std::size_t index = 0; index != 2; ++index) {
             const auto ordinal = index == 0 ? 0u : 3u;
@@ -197,7 +202,7 @@ bool update(OwnerView owner, Request& input, const EnvironmentEngine& engine) {
     const auto mode = header.resolver_index;
     if (tick <= header.command_tick || (header.flags & 0x22U) != 0 || (mode != 1 && mode != 2))
         return false;
-    const auto previous_attempt = *owner.attempts[mode];
+    const auto previous_attempt = input.strict() ? header.resolver_mode : *owner.attempts[mode];
     const auto local_time = input.local_time();
     if (local_time == owner.probe_time &&
         (owner.probe_count >= 2 || std::fabs(input.current_time() - owner.probe_stamp) < 5.0f))
@@ -229,9 +234,11 @@ bool update(OwnerView owner, Request& input, const EnvironmentEngine& engine) {
     if (rebase) {
         const EnvironmentRebase correction{yaw_delta, header.origin, target_origin};
         selection = score_environment_hypotheses(source, *hitboxes, direction, origin, correction,
-                                                 engine.trigonometry);
+                                                 engine.trigonometry, input.strict());
     } else
-        selection = score_environment_hypotheses(source, *hitboxes, direction, origin);
+        selection = score_environment_hypotheses(source, *hitboxes, direction, origin, input.strict());
+    if (input.strict() && !selection.valid())
+        return false;
     owner.probe_time = local_time;
     owner.last_update_tick = input.tick();
     auto publication_history = input.history();

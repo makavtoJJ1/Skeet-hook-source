@@ -193,7 +193,6 @@ public:
         engine_client = b.engine_client;
         initialize_shot_log_settings(b.configuration, b.settings);
         b.state.pending.clear();
-        b.state.extrapolation_shots.clear();
         b.state.events.has_pending_shots = false;
         constexpr char message[] = "Missed shot due to spread";
         static_assert(sizeof(message) == 26);
@@ -293,7 +292,6 @@ FeedbackPacketOffsets feedback_packet_offsets(const engine::NativeOffsetStorage&
 void reset_feedback_owner(FeedbackOwner& owner) noexcept {
     auto& state = owner.bindings.state;
     state.pending.clear();
-    state.extrapolation_shots.clear();
     state.events.feedback.clear();
     state.fire_snapshots.clear();
     state.events.has_pending_shots = false;

@@ -168,6 +168,14 @@ static_assert(offsetof(ExtendedFilter, minimum_damage) == 0x20);
 #endif
 }
 
+std::int32_t EngineBallistics::trace_bullet(BallisticEntity source, const BallisticVector& start,
+                                           const BallisticVector& target, BallisticQuery& query) {
+    BallisticFilter filter{nullptr, 0, 0x4600400Bu, 0x4600400Bu, 1.0f};
+    ExtendedFilter native(bindings_, filter);
+    filter.object = &native;
+    return trace_ballistic_bullet(*this, source, start, target, filter, query);
+}
+
 std::int32_t EngineBallistics::filter_type(const BallisticFilter& filter) {
     if (filter.kind == BallisticFilterKind::world_only)
         return 1;

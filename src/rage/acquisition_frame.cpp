@@ -83,7 +83,8 @@ ScanContext refresh_scanner(const ScanContext& seed, PreambleState& state,
             seed.update_attachments,
             seed.teammate_convars,
             seed.trace_filter_vtable,
-            seed.trace_entities};
+            seed.trace_entities,
+            seed.damage_context};
 }
 ScanContext refresh_projected_scanner(const ScanContext& seed, const client::CommandFrame& frame,
                                       const lagcomp::EntityPreparationContext& preparation) {
@@ -111,7 +112,8 @@ ScanContext refresh_projected_scanner(const ScanContext& seed, const client::Com
             seed.update_attachments,
             seed.teammate_convars,
             seed.trace_filter_vtable,
-            seed.trace_entities};
+            seed.trace_entities,
+            seed.damage_context};
 }
 BodyAimProbeContext refresh_projected_body(const BodyAimProbeContext& seed,
                                            const ScanContext& scanner,
@@ -157,20 +159,26 @@ AcquisitionBranchFrameBindings::AcquisitionBranchFrameBindings(
       extrapolation{
           records_seed.extrapolation.players,     extrapolation_preparation,
           records_seed.extrapolation.attachments, records_seed.extrapolation.bones,
-          records_seed.extrapolation.movement,    records_seed.extrapolation.prediction_limit},
+          records_seed.extrapolation.movement,    records_seed.extrapolation.prediction_limit,
+          records_seed.extrapolation.validate_record, records_seed.extrapolation.rebuild_pose},
       history_extrapolation{records_seed.history.extrapolation.players,
                             history_preparation,
                             records_seed.history.extrapolation.attachments,
                             records_seed.history.extrapolation.bones,
                             records_seed.history.extrapolation.movement,
-                            records_seed.history.extrapolation.prediction_limit},
+                            records_seed.history.extrapolation.prediction_limit,
+                            records_seed.history.extrapolation.validate_record,
+                            records_seed.history.extrapolation.rebuild_pose},
       history{history_extrapolation,
               records_seed.history.alternative,
               records_seed.history.rotation,
               records_seed.history.matrix_scratch,
               clock,
               records_seed.history.interpolation,
-              records_seed.history.maximum_unlag_ms},
+              records_seed.history.maximum_unlag_ms,
+              records_seed.history.jitter_fix,
+              records_seed.history.animation_rebuild,
+              records_seed.history.resolver_corrections},
       preparation{targeting,
                   preparation_seed.global,
                   preparation_seed.weapon_settings,

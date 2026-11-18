@@ -119,6 +119,10 @@ SkinsMenu::~SkinsMenu() {
     for (auto* category : categories())
         std::erase(tab_.categories, category);
 }
+void SkinsMenu::append_team_config(std::vector<ConfigDescriptor*>& descriptors) const {
+    for (const auto& setting : required)
+        descriptors.push_back(&descriptor(settings_, setting.hash));
+}
 void SkinsMenu::refresh() {
     refresh_.invalidate_weapon_models();
     refresh_.schedule_full_update(refresh_.current_time() + 0.25f);

@@ -88,6 +88,8 @@ void ConfigPresetsMenu::synchronize_selection() {
     hotkey_->config_loaded();
     hotkey_->set_visible(hotkey_->value != nullptr);
     hotkey_->enabled = hotkey_->value != nullptr;
+    if (selection_refreshed.function)
+        selection_refreshed.function(selection_refreshed.context, *list_);
 }
 
 void ConfigPresetsMenu::refresh() {

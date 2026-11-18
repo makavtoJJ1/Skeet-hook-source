@@ -30,7 +30,7 @@ HistoryAnimationSeed prepare_history_animation(client::PlayerState& owner, void*
                                                void* animation_state, std::int32_t simulation_ticks,
                                                std::uint32_t update_flags,
                                                const EntityStateRuntime& entity,
-                                               std::uint32_t flags_offset) {
+                                               std::uint32_t flags_offset, bool strict_bounds) {
     const auto reference = owner.native.reference_yaw;
     const auto stationary = read<float>(&owner.native, 0x118);
     const auto elapsed = float(simulation_ticks) * entity.interval;
@@ -42,7 +42,8 @@ HistoryAnimationSeed prepare_history_animation(client::PlayerState& owner, void*
         read<float>(animation_state, 0xEC),
         read<float>(animation_state, 0xF0)};
     owner.native.capture_field_180 = std::bit_cast<std::uint32_t>(advance_animation_yaw(
-        motion, target, stationary, elapsed, std::bit_cast<float>(owner.native.capture_field_180)));
+        motion, target, stationary, elapsed, std::bit_cast<float>(owner.native.capture_field_180),
+        strict_bounds));
     if ((update_flags & 1u) && !owner.history.count &&
         (read<std::uint8_t>(player, flags_offset) & 1u)) {
         write(animation_state, 0x108, std::uint8_t(1));

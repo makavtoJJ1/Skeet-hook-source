@@ -1,4 +1,5 @@
 #include "skeet/rage/acquisition.hpp"
+#include "skeet/lagcomp/record_validity.hpp"
 #include "skeet/rage/preamble.hpp"
 #include "skeet/rage/feedback_owner.hpp"
 #include "skeet/engine/interface_call.hpp"
@@ -88,7 +89,20 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
                 continue;
             }
         }
-        slot.extrapolated = bindings.extrapolation.movement.rework && slot.extrapolation_ticks > 0;
+        if (bindings.extrapolation.validate_record) {
+            const lagcomp::HistoryTickTiming timing{
+                bindings.history.current_time, field<float>(&frame, 0x198),
+                bindings.history.interpolation, bindings.interval,
+                bindings.history.maximum_unlag_ms, std::bit_cast<std::int32_t>(frame.field_d4),
+                std::bit_cast<std::int32_t>(frame.field_18c)};
+            if (!lagcomp::record_time_valid(slot.record, timing) ||
+                !lagcomp::record_geometry_valid(slot.record) ||
+                lagcomp::record_precedes_discontinuity(
+                    bindings.players.get(candidate.entity_index)->history,
+                    slot.record.header.simulation_tick))
+                continue;
+        }
+        slot.extrapolated = slot.extrapolation_ticks > 0;
         auto scan = slot.settings.scan_policy();
         TargetRecordPolicy policy{{scan.hitboxes, slot.record.header.flags, 0, scan.prefer_body},
                                   initial_flags,

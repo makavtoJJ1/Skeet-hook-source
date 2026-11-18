@@ -136,8 +136,7 @@ void shot_capture_target(ShotFeedbackRecord& destination, const lagcomp::Evaluat
 }
 
 bool publish_pending_shot(const client::CommandFrame& frame, const lagcomp::EvaluationState& source,
-                          std::int32_t shot_index, const PendingShotPublicationBindings& bindings,
-                          std::int32_t extrapolation_ticks) {
+                          std::int32_t shot_index, const PendingShotPublicationBindings& bindings) {
     auto* appended = append_current_pending_shot(bindings);
     if (!appended)
         return false;
@@ -171,24 +170,19 @@ bool publish_pending_shot(const client::CommandFrame& frame, const lagcomp::Eval
         shot.words[8] = UINT32_MAX;
     }
     shot_capture_target(shot, source, frame.origin_dc, 0, bindings);
-    if (extrapolation_ticks > 0) {
-        feedback_owner_state(bindings.active)
-            ->extrapolation_shots.push_back({frame.command_number_ac, shot_index,
-                                             extrapolation_ticks,
-                                             source.record.header.simulation_tick});
-        feedback_owner_runtime(bindings.active)
-            ->normal_log.console_format(
-                "[extrapolation] FIRE shot=%d target=%u +%d ticks record=%d", shot_index,
-                source.words[1], extrapolation_ticks, source.record.header.simulation_tick);
-    }
     auto& player = *bindings.players.get(source.words[1]);
     const auto mode = source.record.header.resolver_index;
     field(&player.native, 0x14 + std::uint32_t(mode) * 0x24, bits(*bindings.current_time));
     write_mode_yaw(player.native, source);
     // Publication is not feedback. Wait for the actual shot ray before
     // rejecting a pose; a pending high-chance shot has not missed yet.
-    if (bindings.resolver_rework && *bindings.resolver_rework)
+    if (bindings.resolver_rework)
         return true;
+    if (bindings.jitter_fix) {
+        const auto* evidence = player.jitter.find(source.record.header);
+        if (evidence && evidence->applied_to(source.record.header))
+            return true;
+    }
     if (!(shot.state.words[13] & 4U) || !shot.state.record.header.resolver_index ||
         !(real(shot.state.words[14]) > 0.9f) ||
         integer(shot.state.words[10]) < integer(shot.state.words[2]))

@@ -67,13 +67,19 @@ void StaticCrtInitialization::finalize_pointer_storage(std::uint32_t native_fina
     for (const auto& entry : pointers) {
         if (entry.finalizer != native_finalizer)
             continue;
-        auto& cell = engine::require_native_data_image(data).native_cell<void*>(entry.cell);
+        auto& image = engine::require_native_data_image(data);
+        auto& cell = image.native_cell<void*>(entry.cell);
         if (auto* const allocation = cell) {
             engine::release_owner_storage(memory, allocation);
-            //Only433B32BF/433B1FE9 clear their live pointer after the free
-            //boundary. Every other terminal callback preserves all cells.
+            // Only 433B32BF/433B1FE9 clear their pointer in the native binary.
             if (entry.clear_after_free)
                 cell = nullptr;
+        }
+        if (entry.cell == 0x434797A0u) {
+            // The source application destroys ShotModelBoneStorage after the
+            // CRT exit callbacks. Both share this vector, so revoke ownership
+            // here to prevent its C++ destructor from freeing the block again.
+            image.native_cell<std::array<void*, 3>>(entry.cell).fill(nullptr);
         }
         return;
     }

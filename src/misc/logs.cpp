@@ -95,20 +95,37 @@ void ErrorLog::vformat(const char* format, std::va_list arguments) {
 void NormalLog::write(std::string_view text) {
     format("%.*s", static_cast<int>(text.size()), text.data());
 }
-void NormalLog::console_format(const char* format, ...) {
-    if (*disabled)
+namespace {
+void print_console(const NormalLog& log, const char* status, std::uint32_t color,
+                   const char* format, std::va_list args) {
+    if (*log.disabled)
         return;
     std::array<char, 1024> message{};
-    std::va_list arguments;
-    va_start(arguments, format);
-    const auto count = vsnprintf(message.data(), message.size() - 2, format, arguments);
-    va_end(arguments);
+    const auto count = vsnprintf(message.data(), message.size() - 2, format, args);
     if (count <= 0 || count >= std::int32_t(message.size() - 2))
         return;
     message[std::size_t(count)] = '\n';
+    auto* const* table = *static_cast<void***>(log.cvar);
+    if (status) {
+        using ColorPrint = void (*)(void*, const std::uint32_t*, const char*, ...);
+        reinterpret_cast<ColorPrint>(table[25])(log.cvar, &color, "%s", status);
+    }
     using Print = void (*)(void*, const char*, ...);
-    reinterpret_cast<Print>((*static_cast<void***>(cvar))[26])(cvar, "[gamesense] %s",
-                                                               message.data());
+    reinterpret_cast<Print>(table[26])(log.cvar, "[gamesense] %s", message.data());
+}
+}
+void NormalLog::console_format(const char* format, ...) {
+    std::va_list arguments;
+    va_start(arguments, format);
+    print_console(*this, nullptr, 0, format, arguments);
+    va_end(arguments);
+}
+void NormalLog::console_status(bool success, const char* format, ...) {
+    std::va_list arguments;
+    va_start(arguments, format);
+    print_console(*this, success ? "YES " : "NO ", success ? 0xFF60DC55u : 0xFF5050E6u,
+                  format, arguments);
+    va_end(arguments);
 }
 void NormalLog::format(const char* format, ...) {
     std::va_list arguments;

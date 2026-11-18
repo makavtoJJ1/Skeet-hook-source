@@ -2,6 +2,7 @@
 #include "skeet/rage/scanning.hpp"
 #include "skeet/rage/scanning_geometry.hpp"
 #include "skeet/rage/scanning_chance.hpp"
+#include "skeet/rage/damage_model.hpp"
 
 namespace skeet::rage::scan_detail {
 struct Model {
@@ -25,6 +26,11 @@ struct ProjectedPoint {
     bool found = false;
 };
 ProjectedPoint project(const ScanContext&, const Geometry&, const RageVector&, float range);
+inline bool precise_damage(const ScanContext& context) {
+    return context.damage_context && context.damage_context->enabled;
+}
+DamageRayResult damage_ray(const ScanContext&, BallisticEntity, const Geometry&,
+                            const RageVector& direction, const BallisticQuery&, bool safe);
 float minimum_multiplier(const ScanPolicy&, std::int32_t health, std::int32_t damage,
                          std::int32_t hitgroup, std::int32_t weapon_id) noexcept;
 RageSpreadBasis spread_basis(const RageVector&) noexcept;

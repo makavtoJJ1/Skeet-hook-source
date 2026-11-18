@@ -16,9 +16,6 @@ template <class T> T read(const void* object, std::ptrdiff_t offset) noexcept {
     std::memcpy(&value, static_cast<const std::byte*>(object) + offset, sizeof(value));
     return value;
 }
-template <class T> void write(void* object, std::ptrdiff_t offset, const T& value) noexcept {
-    std::memcpy(static_cast<std::byte*>(object) + offset, &value, sizeof(value));
-}
 std::int32_t integer(float value) noexcept {
     return _mm_cvttss_si32(_mm_set_ss(value));
 }
@@ -131,7 +128,9 @@ bool receive_shared_esp(SharedEspRuntime& runtime, void* message) { //433D5BCF
     if (!(flags & 0x40u) || read<std::uint32_t>(message, 0x20) != 0 || (flags & 0x185u) != 0x185u)
         return false;
     const auto raw_sender = read<std::uint32_t>(message, 8);
-    auto sender = std::bit_cast<std::int32_t>(raw_sender + 1u);
+    if (raw_sender >= 64u)
+        return false;
+    const auto sender = static_cast<std::int32_t>(raw_sender + 1u);
     if (sender == engine::invoke<std::int32_t>(owner->engine_client, 12))
         return true;
 
@@ -142,27 +141,17 @@ bool receive_shared_esp(SharedEspRuntime& runtime, void* message) { //433D5BCF
     SharedEspPacket packet;
     std::memcpy(packet.bytes.data(), wire.data(), packet.bytes.size());
     packet.sender_index = sender;
-    decrypt_shared_esp_packet(packet, owner->mixing_key);
-    sender = packet.sender_index;
-    misc::PlayerInfo info;
-    if (engine::invoke<bool>(owner->engine_client, 8, sender, &info)) {
-        write(packet.bytes.data(), 0,
-              read<std::uint32_t>(packet.bytes.data(), 0) ^
-                  read<std::uint32_t>(info.bytes.data(), 8));
-        write(packet.bytes.data(), 4,
-              read<std::uint32_t>(packet.bytes.data(), 4) ^
-                  read<std::uint32_t>(info.bytes.data(), 0x90));
-        write(packet.bytes.data(), 8,
-              read<std::uint32_t>(packet.bytes.data(), 8) ^ std::uint32_t(sender));
-    }
-    const auto decoded = decode_shared_esp_packet(packet);
-    if (decoded.marker != owner->marker) {
+    misc::PlayerInfo info{};
+    SharedEspFields decoded{};
+    if (!engine::invoke<bool>(owner->engine_client, 8, sender, &info) ||
+        !decode_shared_esp_packet(packet, *owner, read<std::uint32_t>(info.bytes.data(), 8),
+                                 read<std::uint32_t>(info.bytes.data(), 0x90), decoded)) {
         dispatch_voice_message(runtime, message);
         return false;
     }
     if (!runtime.receive_enabled)
         return false;
-    if (runtime.permission_gate && raw_sender <= 63u &&
+    if (runtime.permission_gate &&
         !runtime.adjustments.records[std::uint32_t(sender)].adjustments.allow_shared_esp)
         return true;
     if (decoded.entity_index < 1 || decoded.entity_index > 64 || !valid_origin(decoded.origin))
@@ -192,7 +181,7 @@ bool receive_shared_esp(SharedEspRuntime& runtime, void* message) { //433D5BCF
             return true;
         cached->native.shared_rule_time = rule_time(runtime);
         cached->native.shared_yaw = normalize_movement_angle(float(decoded.yaw));
-        cached->native.shared_yaw_tick = decoded.tick;
+        cached->native.shared_yaw_tick = current_tick;
         cached->native.flags = (cached->native.flags & ~0x40u) | 0x80u;
     }
     return true;

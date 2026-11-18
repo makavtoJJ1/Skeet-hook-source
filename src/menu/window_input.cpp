@@ -42,7 +42,9 @@ bool MenuWindow::dispatch(WindowMessage& message) { // 0x433BA305
         }
         return true;
     }
-    if (!(input.mouse_flags & 1) || transition_state != 0)
+    if (message.input.message == 0x202 && transition_state != 0)
+        finish_resize();
+    if (startup_placement_pending || !(input.mouse_flags & 1) || transition_state != 0)
         return false;
     auto* focused = tabs.at(navigation.active_tab)->focused_widget();
     if (focused &&

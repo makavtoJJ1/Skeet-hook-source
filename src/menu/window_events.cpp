@@ -1,5 +1,7 @@
 #include "skeet/menu_window.hpp"
 #include "skeet/menu/window_events.hpp"
+#include "skeet/popup_menu.hpp"
+#include <algorithm>
 #include <bit>
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
@@ -43,10 +45,40 @@ void modifier(MenuWindow& window, std::uint32_t key, bool down) noexcept {
     else
         window.button_flags &= ~mask;
 }
+bool tab_context_input(MenuWindow& window, const InputMessage& message, Point cursor) {
+    auto* popup = window.tab_context_menu;
+    if (!popup)
+        return false;
+    if (popup->open) {
+        if (popup->mouse(message, cursor))
+            return true;
+        if (message.message == WM_LBUTTONDOWN || message.message == WM_RBUTTONUP)
+            popup->reset_input();
+        else if (popup->hit_test(cursor))
+            return true;
+    }
+    if (message.message != WM_RBUTTONUP || !inside(window))
+        return false;
+    for (auto* tab : window.tabs) {
+        if (!tab->visible || !tab->hit_test(cursor))
+            continue;
+        active(window).reset_input();
+        popup->parent = tab;
+        auto& rect = popup->geometry.bounds;
+        rect.x = std::clamp(cursor.x, 0, std::max(0, window.geometry.size.x - rect.width)) -
+                 tab->geometry.bounds.x;
+        rect.y = std::clamp(cursor.y, 0, std::max(0, window.geometry.size.y - rect.height)) -
+                 tab->geometry.bounds.y;
+        popup->open = true;
+        return true;
+    }
+    return false;
+}
 }
 bool window_client_bounds(void*, std::uintptr_t window, WindowClientBounds& bounds) {
     RECT native{};
-    if (!GetClientRect(reinterpret_cast<HWND>(window), &native))
+    if (IsIconic(reinterpret_cast<HWND>(window)) ||
+        !GetClientRect(reinterpret_cast<HWND>(window), &native))
         return false;
     bounds = {native.left, native.top, native.right, native.bottom};
     return true;
@@ -61,6 +93,8 @@ bool window_screen_to_client(void*, std::uintptr_t window, Point& cursor) {
 bool route_window_mouse(MenuWindow& window, WindowMessage& message) { // 0x4334EAE8
     const Point relative{sub(window.cursor.x, window.position.x),
                          sub(window.cursor.y, window.position.y)};
+    if (tab_context_input(window, message.input, relative))
+        return true;
     bool handled = false;
     const auto tabs = std::span(window.tabs);
     for (auto i = tabs.size(); i != 0;) {
@@ -77,6 +111,8 @@ bool decode_window_mouse(MenuWindow& window, WindowMessage& message) { // 0x4339
 void select_window_tab(MenuWindow& window, std::uint32_t requested) { // 0x433B75D3
     if (requested == window.navigation.active_tab || requested >= window.tabs.size())
         return;
+    if (window.tab_context_menu)
+        window.tab_context_menu->reset_input();
     active(window).reset_input();
     window.navigation.active_tab = requested;
     active(window).activate();
@@ -119,6 +155,10 @@ void next_window_focus(MenuWindow& window) { // 0x433CBE38
 }
 bool window_key_down(MenuWindow& window, WindowMessage& message) { // 0x433B6EEC
     const auto key = message.input.parameter;
+    if (key == VK_ESCAPE && window.tab_context_menu && window.tab_context_menu->open) {
+        window.tab_context_menu->reset_input();
+        return true;
+    }
     modifier(window, key, true);
     if (key == 9) {
         if (window.button_flags & 8) {
@@ -168,11 +208,12 @@ bool window_left_down(MenuWindow& window, WindowMessage& message) { // 0x43327C8
         sub(window.cursor.y, window.position.y) > sub(window.geometry.size.y, grip);
     window.input.mouse_flags |= resize ? 8 : 4;
     window.drag_anchor = window.cursor;
+    if (resize)
+        window.resize_start_size = window.geometry.size;
     return true;
 }
 bool window_left_up(MenuWindow& window, WindowMessage& message) { // 0x433EE1F2
-    window.input.mouse_flags &= ~12u;
-    window.button_flags &= ~1u;
+    window.finish_resize();
     const auto handled = decode_window_mouse(window, message);
     window.input.mouse_flags &= ~12u;
     window.button_flags &= ~1u;
@@ -217,26 +258,24 @@ bool window_mouse_move(MenuWindow& window, WindowMessage& message) { // 0x4339E9
                 next.y = maximum.y;
         }
         if (next.x != window.position.x || next.y != window.position.y) {
-            window.position = next;
+            window.move(next);
             window.drag_anchor = window.cursor;
         }
     } else if ((window.input.mouse_flags & 8) && (window.cursor.x != window.drag_anchor.x ||
                                                   window.cursor.y != window.drag_anchor.y)) {
-        const auto previous = window.geometry.size;
-        const Point next{add(previous.x, sub(window.cursor.x, window.drag_anchor.x)),
-                         add(previous.y, sub(window.cursor.y, window.drag_anchor.y))};
+        auto size = window.geometry.size;
+        const Point next{add(size.x, sub(window.cursor.x, window.drag_anchor.x)),
+                         add(size.y, sub(window.cursor.y, window.drag_anchor.y))};
         const auto minimum = scale_size(window.default_size, window.input.scale);
         if (next.x >= minimum.x) {
-            window.geometry.size.x = next.x;
+            size.x = next.x;
             window.drag_anchor.x = window.cursor.x;
         }
         if (next.y >= minimum.y) {
-            window.geometry.size.y = next.y;
+            size.y = next.y;
             window.drag_anchor.y = window.cursor.y;
         }
-        if (previous.x != window.geometry.size.x || previous.y != window.geometry.size.y)
-            for (auto* tab : std::span(window.tabs))
-                tab->resize(window.input.slider_metrics);
+        window.resize(size);
     }
     const auto buttons = message.input.parameter & 15;
     const auto changed = window.button_flags ^ buttons;

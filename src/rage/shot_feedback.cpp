@@ -1,4 +1,6 @@
 #include "skeet/rage/shot_feedback.hpp"
+#include "skeet/rage/jitter_log.hpp"
+#include "skeet/rage/shot_log.hpp"
 #include "skeet/rage/feedback_entity_owner.hpp"
 #include "skeet/rage/spread_miss_log.hpp"
 #include "skeet/misc/logs.hpp"
@@ -46,7 +48,7 @@ struct SnapshotFeedbackValues {
         return runtime.ray_tests_disabled;
     }
     bool reworked() const noexcept {
-        return runtime.resolver_rework && *runtime.resolver_rework;
+        return bool(runtime.resolver_rework);
     }
 };
 static_assert(offsetof(client::NativePlayerStateLayout, resolver_slots) == 0x10);
@@ -96,49 +98,26 @@ client::PlayerState& target_state(ShotFeedbackRuntime& runtime, std::int32_t ind
         throw std::out_of_range("Native pending shot requires target index 1..64");
     return *runtime.players.get(std::uint32_t(index));
 }
-void log_extrapolation(ShotFeedbackState& state, const ShotRecordView& shot,
-                       ShotFeedbackRuntime& runtime, const char* outcome, std::uint32_t reason,
-                       int damage = 0, int hitgroup = 0) {
-    // Choke and generated commands rewrite word3. Word1 remains the shot's
-    // publication identity throughout matching, logging and retirement.
-    for (auto& tag : state.extrapolation_shots)
-        if (tag.original_command == integer(shot.record.words[1]) &&
-            tag.id == integer(shot.record.words[5])) {
-            if (tag.reported)
-                return;
-            tag.reported = true;
-            constexpr const char* reasons[]{"unconfirmed/resolver", "spread or obstruction",
-                                            "prediction mismatch", "death", "weapon state changed"};
-            runtime.normal_log.console_format(
-                "[extrapolation] %s shot=%d target=%d +%d ticks record=%d damage=%d hitgroup=%d reason=%s",
-                outcome, tag.id, shot.target(), tag.ticks, tag.simulation_tick, damage, hitgroup,
-                reason < 5 ? reasons[reason] : "none");
-            return;
-        }
-}
-void notify_miss(ShotFeedbackState& state, const ShotRecordView& shot, std::uint32_t reason,
-                 ShotFeedbackRuntime& runtime) {
-    log_extrapolation(state, shot, runtime, "MISS", reason);
+void notify_miss(ShotFeedbackState& state, ShotFeedbackRuntime& runtime,
+                 const ShotRecordView& shot, std::uint32_t reason) {
     const auto event = shot.script_shot();
+    rage::log_shot_result(runtime.spread_log_settings, runtime.normal_log, shot, false, reason);
+    rage::log_jitter_result(runtime.players, runtime.normal_log, shot, false, reason);
     script::dispatch_aim_miss(state.scripts, event, reason);
     state.notices.push_back({ShotFeedbackNoticeKind::miss, event, reason, 0, 0, 0});
 }
-void notify_hit(ShotFeedbackState& state, const ShotRecordView& shot, const events::ShotEvent& hurt,
-                ShotFeedbackRuntime& runtime) {
+void notify_hit(ShotFeedbackState& state, ShotFeedbackRuntime& runtime,
+                const ShotRecordView& shot, const events::ShotEvent& hurt) {
     const auto event = shot.script_shot();
     const auto target = integer(hurt.payload[0]), group = integer(hurt.payload[1]),
                damage = integer(hurt.payload[2]);
-    log_extrapolation(state, shot, runtime, target == shot.target() ? "HIT" : "HIT OTHER TARGET",
-                      UINT32_MAX, damage, group);
+    rage::log_shot_result(runtime.spread_log_settings, runtime.normal_log, shot, true, 0,
+                         target, group, damage);
+    rage::log_jitter_result(runtime.players, runtime.normal_log, shot, true, 0, target, group, damage);
     script::dispatch_aim_hit(state.scripts, event, target, group, damage);
     state.notices.push_back({ShotFeedbackNoticeKind::hit, event, 0, target, group, damage});
 }
 void erase_shot(ShotFeedbackState& state, std::size_t index) {
-    const ShotRecordView shot{state.pending[index]};
-    const auto command = integer(shot.record.words[1]), id = integer(shot.record.words[5]);
-    std::erase_if(state.extrapolation_shots, [&](const auto& value) {
-        return value.original_command == command && value.id == id;
-    });
     for (std::size_t next = index + 1; next < state.pending.size(); ++next)
         lagcomp::assign_evaluation(state.pending[next - 1], state.pending[next]);
     state.pending.pop_back();
@@ -348,13 +327,19 @@ void classify_shot_ray_body(ShotFeedbackState& state, ShotFeedbackRecord& record
                             ShotFeedbackRuntime& runtime, Values& values) {
     ShotRecordView shot{record};
     std::uint32_t reason = 0;
-    if (values.reworked() && (shot.flags() & 0x20u))
+    const bool jitter = rage::jitter_shot_used(runtime.players, shot);
+    if (shot.flags() & 0x20u) {
+        rage::log_shot_result(runtime.spread_log_settings, runtime.normal_log, shot, false, 5);
+        rage::log_jitter_result(runtime.players, runtime.normal_log, shot, false, 5);
+    }
+    if ((values.reworked() || jitter) && (shot.flags() & 0x20u)) {
         return;
+    }
     const auto finite = [](const RageVector& value) {
         return std::all_of(value.begin(), value.end(),
                            [](float axis) { return std::isfinite(axis); });
     };
-    if (values.reworked() &&
+    if ((values.reworked() || jitter) &&
         ((origin && !finite(*origin)) ||
          (direction && (!finite(*direction) || distance_squared_zyx(*direction) < 1e-8f)))) {
         origin = nullptr;
@@ -382,8 +367,10 @@ void classify_shot_ray_body(ShotFeedbackState& state, ShotFeedbackRecord& record
         trace_ballistic_bullet(runtime.ballistics, 0, shot.origin(), end, filter, query);
         const RageRay ray{*origin, difference(query.trace.end, *origin)};
         const auto hitboxes = runtime.engine.hitboxes(shot.model(), shot.hitbox_set());
-        const auto count = std::min<std::size_t>(19, hitboxes.size());
-        reason = 1;
+        const auto count = jitter && !(record.state.record.header.flags & 4u)
+                               ? 0u
+                               : std::min<std::size_t>(19, hitboxes.size());
+        reason = jitter && !count ? 0 : 1;
         for (std::size_t index = 0; index < count; ++index) {
             const auto& box = hitboxes[index];
             auto matrix = record.state.record.matrices[index];
@@ -400,14 +387,15 @@ void classify_shot_ray_body(ShotFeedbackState& state, ShotFeedbackRecord& record
             rage::log_spread_miss(runtime.spread_log_settings, runtime.normal_log);
     }
     if (!(shot.flags() & 0x20U)) {
-        notify_miss(state, shot, reason, runtime);
+        notify_miss(state, runtime, shot, reason);
         shot.flags() |= 0x20U;
     }
     if (reason)
         return;
     // Missing impact data is an unknown miss, not evidence against a pose.
-    if (values.reworked() && (!verified_intersection || !(record.state.record.header.flags & 4u) ||
-                              (shot.flags() & 0x1Eu)))
+    if ((values.reworked() || jitter) &&
+        (!verified_intersection || !(record.state.record.header.flags & 4u) ||
+         (shot.flags() & 0x1Eu)))
         return;
     auto& target = target_state(runtime, shot.target());
     runtime.player_adjustments.records[std::size_t(shot.target())].adjustments.correction_active =
@@ -515,7 +503,7 @@ void reconcile_shot_feedback_body(ShotFeedbackState& state, ShotFeedbackRuntime&
                 if (entity.exists && entity.life_id != -1 &&
                     entity.life_id > shot.target_life_id()) {
                     if (!(shot.flags() & 0x20U)) {
-                        notify_miss(state, shot, 4, runtime);
+                        notify_miss(state, runtime, shot, 4);
                         shot.flags() |= 0x20U;
                     }
                     erase_shot(state, index);
@@ -540,12 +528,11 @@ void reconcile_shot_feedback_body(ShotFeedbackState& state, ShotFeedbackRuntime&
                 for (auto& record : state.pending) {
                     ShotRecordView shot{record};
                     if (!(shot.flags() & 0x20U)) {
-                        notify_miss(state, shot, 3, runtime);
+                        notify_miss(state, runtime, shot, 3);
                         shot.flags() |= 0x20U;
                     }
                 }
                 state.pending.clear();
-                state.extrapolation_shots.clear();
                 state.fire_snapshots.clear();
                 finish();
                 return;
@@ -553,7 +540,7 @@ void reconcile_shot_feedback_body(ShotFeedbackState& state, ShotFeedbackRuntime&
             for (auto& record : state.pending) {
                 ShotRecordView shot{record};
                 if (shot.target() == victim && !(shot.flags() & 0x20U)) {
-                    notify_miss(state, shot, 3, runtime);
+                    notify_miss(state, runtime, shot, 3);
                     shot.flags() |= 0x20U;
                 }
             }
@@ -619,7 +606,7 @@ void reconcile_shot_feedback_body(ShotFeedbackState& state, ShotFeedbackRuntime&
             direction_argument = &direction;
         }
         if (hurt) {
-            notify_hit(state, shot, *hurt, runtime);
+            notify_hit(state, runtime, shot, *hurt);
             if (!(shot.flags() & 0x20U) && runtime.engine.entity_by_index(shot.target()).exists)
                 confirm_target_hit(target_state(runtime, shot.target()), record);
         } else if (!(shot.flags() & 0x20U))
@@ -653,8 +640,6 @@ void reconcile_shot_feedback_body(ShotFeedbackState& state, ShotFeedbackRuntime&
                                 shot.shot_tick() &&
                             lagcomp::time_to_tick(entity.last_shot_time, values.interval()) ==
                                 shot.shot_tick()) {
-                            log_extrapolation(state, shot, runtime, "HIT INFERRED", UINT32_MAX,
-                                              shot.target_health() - int(entity.health));
                             confirm_target_hit(target_state(runtime, shot.target()), *candidate);
                             shot.flags() |= 0x20U;
                         }

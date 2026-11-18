@@ -177,7 +177,7 @@ void update_sequences(const Settings& settings, SequenceRuntime& state,
                 engine.end_model_cache_lock();
                 if (entry.tag)
                     engine.schedule_full_update(engine.current_time() + 0.25f);
-            } else if (entity->class_id == state.viewmodel_class) {
+            } else if (entity->class_id == state.weapon_world_model_class) {
                 local = engine.local_player();
                 if (!local)
                     continue;

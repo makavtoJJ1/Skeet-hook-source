@@ -1,4 +1,6 @@
 #include "skeet/menu/root_menu.hpp"
+#include "skeet/config_storage/load_state.hpp"
+#include "skeet/menu/category_config.hpp"
 #include "skeet/menu/anti_aim_menu.hpp"
 #include "skeet/menu/anti_aim_extra_menu.hpp"
 #include "skeet/menu/legit_menu.hpp"
@@ -15,12 +17,18 @@
 #include "skeet/render/menu_window_assets.hpp"
 #include "skeet/render/dpi_bridge.hpp"
 #include "skeet/input/runtime.hpp"
+#include <algorithm>
 #include <optional>
 #include <stdexcept>
+#include <utility>
 
 namespace skeet::ui {
 
 namespace {
+struct ScopedTabConfigLoad {
+    const bool previous = std::exchange(config_loading_flag(), true);
+    ~ScopedTabConfigLoad() { config_loading_flag() = previous; }
+};
 void aa_notification(MenuWindow&, std::uint32_t);
 struct AANotification {
     MenuWindow& window;
@@ -153,6 +161,7 @@ struct RootConfigTab final : Tab {
         : Tab(window.navigation, window.input, window.geometry, u"CONFIG", next, b.identities),
           presets(*this, b.identities, b.presets),
           scripts(*this, b.identities, b.script_values, b.scripts.modules().manager()) {
+        scripts.bind_presets(presets);
         presets.refresh();
     }
     void activate() override {
@@ -181,10 +190,21 @@ void activate_tab(void* raw) {
 }
 
 struct RootMenu::Data {
+    struct TabConfigPopup : PopupMenu {
+        Data& owner;
+        TabConfigPopup(Data& data, WidgetIdentities& identities)
+            : PopupMenu(nullptr, {u"Copy", u"Paste"}, identities), owner(data) {
+            selected = [](Widget& tab, PopupMenu& popup, std::uint32_t action) {
+                static_cast<TabConfigPopup&>(popup).owner.clipboard_action(static_cast<Tab&>(tab),
+                                                                          action);
+            };
+        }
+    };
     MenuWindow& window;
     RootMenuBindings bindings;
     script::UiBindings& script_ui;
     script::ClientBindings& script_client;
+    std::optional<TabConfigPopup> tab_config_popup;
     MenuWindow* window_address;
     PlayersMenu* player_menu_address = nullptr;
     MainMenuAssets assets;
@@ -207,6 +227,91 @@ struct RootMenu::Data {
         auto* result = tab.get();
         append_menu_tab(window, std::move(tab));
         return result;
+    }
+    std::vector<ConfigDescriptor*> tab_descriptors(Tab& tab) {
+        auto descriptors = collect_tab_config(tab, bindings.configuration.descriptors);
+        if (&tab == rage) {
+            const auto enabled = bindings.rage_groups.enabled_descriptors();
+            descriptors.insert(descriptors.end(), enabled.begin(), enabled.end());
+            const auto groups = bindings.rage_groups.blob_descriptors();
+            descriptors.insert(descriptors.end(), groups.begin(), groups.end());
+        } else if (&tab == legit) {
+            legit->menu.append_weapon_keys(descriptors);
+        } else if (&tab == skins) {
+            skins->menu.append_team_config(descriptors);
+        }
+        for (const auto& record : script_ui.records)
+            if (record.widget && record.configuration && owning_tab(record.widget) == &tab)
+                descriptors.push_back(record.configuration);
+        std::vector<ConfigDescriptor*> scope;
+        scope.reserve(descriptors.size());
+        for (auto* descriptor : descriptors) {
+            auto& header = config_native_header(*descriptor);
+            if (config_value_supported(header) && std::ranges::find(scope, &header) == scope.end())
+                scope.push_back(&header);
+        }
+        return scope;
+    }
+    void copy_tab_config(Tab& tab, std::span<ConfigDescriptor*> descriptors) {
+        ConfigBytes group;
+        const ConfigDescriptor* active_group = nullptr;
+        if (&tab == rage && rage->selected < rage->group_state.groups.size()) {
+            auto& state = rage->group_state;
+            if (save_category_config(window, state.registry, "rage", "aimbot", group,
+                                     state.baseline_a.bytes(), state.baseline_b.bytes()) &&
+                group.size() < UINT16_MAX)
+                active_group = &config_native_header(*state.groups[rage->selected]);
+        }
+        ConfigBytes stream;
+        initialize_config_stream(stream);
+        for (const auto* descriptor : descriptors) {
+            if (descriptor == active_group) {
+                auto key = config_record_key(*descriptor);
+                key.size = static_cast<std::uint16_t>(group.size());
+                append_config_record(stream, key, group);
+            } else {
+                serialize_config_value(*descriptor, stream);
+            }
+        }
+        write_config_clipboard(stream, bindings.clipboard, window.native_window);
+    }
+    void paste_tab_config(Tab& tab, std::span<ConfigDescriptor*> descriptors) {
+        ConfigBytes stream;
+        read_config_clipboard(stream, bindings.clipboard);
+        if (!valid_config_stream(stream))
+            return;
+        // A header-only preset represents defaults. Other streams must
+        // contain at least one setting belonging to the clicked tab.
+        const auto contains_setting = [&](const ConfigDescriptor* descriptor) {
+            return find_config_record(stream, config_record_key(*descriptor)).has_value();
+        };
+        if (stream.size() > 12 && !std::ranges::any_of(descriptors, contains_setting))
+            return;
+        if (&tab == rage) {
+            for (const auto* group : bindings.rage_groups.blob_descriptors()) {
+                const auto record = find_config_record(stream, config_record_key(*group));
+                if (record && !record->value.empty() && !valid_config_stream(record->value))
+                    return;
+            }
+        }
+        ScopedTabConfigLoad loading;
+        load_category_config_values(descriptors, stream, bindings.baseline_a.bytes(),
+                                    bindings.baseline_b.bytes());
+        if (&tab == rage) {
+            const auto* global = rage->group_state.groups[0];
+            reload_rage_weapon_groups_from_preset(rage->group_state, rage->selected,
+                                                  !contains_setting(global));
+        }
+        tab.config_loaded();
+    }
+    void clipboard_action(Tab& tab, std::uint32_t action) {
+        auto descriptors = tab_descriptors(tab);
+        if (descriptors.empty())
+            return;
+        if (action == 0)
+            copy_tab_config(tab, descriptors);
+        else if (action == 1)
+            paste_tab_config(tab, descriptors);
     }
     RootMenuLayoutTargets targets() const {
         const auto legit_categories = legit->menu.categories();
@@ -280,9 +385,14 @@ RootMenu::RootMenu(MenuWindow& window, RootMenuBindings bindings)
     window.navigation.tabs = d.navigation;
     modules.bind_menu(window, bindings.configuration, bindings.identities, bindings.player_state,
                       bindings.input, d.players->menu);
+    auto& popup = d.tab_config_popup.emplace(d, bindings.identities);
+    popup.dpi_changed(window.input.scale, window.input.slider_metrics);
+    window.tab_context_menu = &popup;
 }
 RootMenu::~RootMenu() {
     auto& d = *data_;
+    if (d.tab_config_popup && d.window.tab_context_menu == &*d.tab_config_popup)
+        d.window.tab_context_menu = nullptr;
     if (d.bindings.input.main_menu == d.window_address &&
         d.window.navigation.tabs.data() == d.navigation.data())
         d.window.navigation.tabs = {};

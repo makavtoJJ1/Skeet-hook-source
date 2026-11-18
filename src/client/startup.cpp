@@ -2,6 +2,7 @@
 #include "skeet/client/shutdown.hpp"
 #include "skeet/config_storage/owner.hpp"
 #include "skeet/config_storage/preserved.hpp"
+#include "skeet/config_storage/presets.hpp"
 #include "skeet/engine/interface_call.hpp"
 #include "skeet/engine/unload.hpp"
 #include "skeet/input/window_hook.hpp"
@@ -129,6 +130,8 @@ void PostInitializationRuntime::initialize() { // 4341F57F..4341F7CD
 
     bindings_.menu.scripts_menu().initialize_startup(imports_.get_command_line_a(),
                                                      bindings_.startup_scripts);
+    // Lua controls must exist before the preset restores their saved values.
+    bindings_.menu.preset_manager().load_startup();
     if (engine::invoke<bool>(hooks.engine, 26)) {
         reset_startup_acknowledgements(bindings_.acknowledgements);
         reset_command_state(bindings_.command_reset);

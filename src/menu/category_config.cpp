@@ -5,7 +5,9 @@
 #include "skeet/hotkey_widget.hpp"
 #include "skeet/listbox.hpp"
 #include "skeet/multiselect.hpp"
+#include <algorithm>
 #include <stdexcept>
+#include <utility>
 
 namespace skeet::ui {
 namespace {
@@ -93,6 +95,41 @@ std::vector<ConfigDescriptor*> collect_category_config(Category& category,
     }
     return descriptors;
 }
+std::vector<ConfigDescriptor*> collect_tab_config(const Tab& tab, ConfigLink& registry) {
+    std::vector<std::uintptr_t> values;
+    for (const auto* category : tab.categories) {
+        std::shared_lock lock(category->elements_mutex);
+        for (const auto* widget : category->elements) {
+            switch (widget->kind) {
+            case 3:
+            case 4:
+            case 5:
+            case 6:
+            case 9:
+            case 12:
+            case 13:
+                if (const auto* value = widget_value(*widget))
+                    values.push_back(reinterpret_cast<std::uintptr_t>(value));
+                break;
+            }
+        }
+    }
+    std::ranges::sort(values);
+    std::vector<ConfigDescriptor*> descriptors;
+    for (auto* link = registry.next; link && link != &registry; link = link->next) {
+        auto& descriptor = static_cast<ConfigDescriptor&>(*link);
+        if (descriptor.type == ConfigType::blob)
+            continue;
+        // Composite controls point into a descriptor (for example, the
+        // selected weapon's slot in a LEGIT array).
+        const auto bytes = config_value_bytes(descriptor);
+        const auto address = reinterpret_cast<std::uintptr_t>(bytes.data());
+        const auto value = std::ranges::lower_bound(values, address);
+        if (value != values.end() && *value - address < bytes.size())
+            descriptors.push_back(&descriptor);
+    }
+    return descriptors;
+}
 bool category_config_loading() noexcept {
     return config_loading_flag();
 }
@@ -101,12 +138,12 @@ void load_category_config_values(std::span<ConfigDescriptor*> descriptors,
                                  std::span<const std::byte> baseline_a,
                                  std::span<const std::byte> baseline_b) { // 0x43369B2C
     auto& loading = config_loading_flag();
-    loading = true;
+    const bool previous = std::exchange(loading, true);
     for (const auto stream : {baseline_a, baseline_b, selected})
         if (!stream.empty())
             for (auto* descriptor : descriptors)
                 deserialize_config_value(*descriptor, stream, loading);
-    loading = false;
+    loading = previous;
 }
 bool save_category_config(MenuWindow& window, ConfigLink& registry, std::string_view tab_name,
                           std::string_view category_name, ConfigBytes& output,

@@ -30,7 +30,8 @@ float angle_modulo(float value) noexcept {
 }
 
 float advance_animation_yaw(const AnimationYawMotion& motion, float target_yaw,
-                            float stationary_yaw, float elapsed, float current_yaw) noexcept {
+                            float stationary_yaw, float elapsed, float current_yaw,
+                            bool strict_bounds) noexcept {
     current_yaw = _mm_cvtss_f32(
         _mm_min_ss(_mm_max_ss(_mm_set_ss(current_yaw), _mm_set_ss(-360.0f)), _mm_set_ss(360.0f)));
     float delta = float(std::fmod(double(target_yaw - current_yaw), 360.0));
@@ -44,8 +45,9 @@ float advance_animation_yaw(const AnimationYawMotion& motion, float target_yaw,
     anti_aim::animation_yaw_limits(motion.bounds, minimum, maximum);
     if (delta > maximum)
         current_yaw = target_yaw - maximum;
-    else if (delta < negative(maximum))
-        current_yaw = maximum + target_yaw;
+    else if (delta < (strict_bounds ? minimum : negative(maximum)))
+        // The server clamps the lower and upper model yaw limits independently.
+        current_yaw = strict_bounds ? target_yaw - minimum : maximum + target_yaw;
     current_yaw = normalize(current_yaw);
 
     float rate;

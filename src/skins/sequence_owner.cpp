@@ -53,7 +53,7 @@ struct SequenceOwner {
         register_integer(registry.descriptors, setting.knife_model_ct, 0xB3C4B6CA);
         auto& state = bindings.state;
         state.inventory_resolver = bindings.entity_list;
-        state.viewmodel_class = bindings.viewmodel_class;
+        state.weapon_world_model_class = bindings.weapon_world_model_class;
         state.knife_class = bindings.knife_class;
         state.original_model = state.original_definition = -1;
         state.inspection_sequence = "lookat01";

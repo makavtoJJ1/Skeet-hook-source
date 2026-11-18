@@ -24,6 +24,9 @@ void feature_indicators(void* context) { //434909F8, descriptor43468B84
 void anti_aim_correction(void* context) { //43490A1A, descriptor4346753C
     auto& source = bindings(context);
     append(source, source.rage.anti_aim_correction);
+    append(source, source.rage.experimental_rage);
+    for (const auto option : rage::active_experimental_rage_options)
+        append(source, source.rage.experimental_options[std::size_t(option)]);
 }
 void visual_recoil(void* context) { //43490A34, descriptor4346744C
     auto& source = bindings(context);

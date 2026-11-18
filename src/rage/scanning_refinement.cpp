@@ -11,6 +11,37 @@ void refine(const ScanContext& context, const ScanPolicy& policy, std::int32_t h
     const auto reference = point.reference_position;
     const auto damage = point.damage;
     const auto shots = rage_detail::shots_to_kill(health, damage);
+    if (precise_damage(context)) {
+        const auto bullet = prepare_target_bullet(context.weapon, context.weapon_item_offset,
+                                                   context.allow_penetration);
+        // Damage is discontinuous at cover and hitgroup boundaries. Evaluate
+        // bounded candidates instead of interpolating damage or assuming monotonicity.
+        for (unsigned step = 0; step < 8; ++step) {
+            const float fraction = float(step) / 8.0f;
+            RageVector trial;
+            for (unsigned axis = 0; axis < 3; ++axis)
+                trial[axis] = reference[axis] + (original[axis] - reference[axis]) * fraction;
+            const auto projection = project(context, geometry, trial, bullet.range);
+            if (!projection.found || projection.hitgroup != point.hitgroup)
+                continue;
+            const auto evaluated = damage_ray(context, target, geometry, projection.direction,
+                                               bullet, (point.flags & 1U) != 0);
+            const auto trial_damage = damage_lower_bound(evaluated.health_damage);
+            if (trial_damage <= 0 || trial_damage < policy.minimum_damage ||
+                rage_detail::shots_to_kill(health, trial_damage) > shots)
+                continue;
+            point.position = trial;
+            point.damage = trial_damage;
+            point.hitbox = evaluated.hit.hitbox;
+            point.hitgroup = evaluated.hit.hitgroup;
+            point.descriptor_weight *= fraction;
+            break;
+        }
+        // The final stage counts the complete seed domain with actual damage.
+        // A 32-ray geometric estimate must not veto that damage-aware decision.
+        point.chance = 1.0f;
+        return;
+    }
     float fraction = 0.5f;
     auto reference_damage = point.reference_damage;
     bool interpolate = rage_detail::shots_to_kill(health, reference_damage) == shots;

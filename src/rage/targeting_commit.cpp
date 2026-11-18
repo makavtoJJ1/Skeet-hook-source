@@ -13,6 +13,7 @@
 #include "../rage_point_math.hpp"
 #include "final_target_context_detail.hpp"
 #include "skeet/rage/preamble.hpp"
+#include "skeet/rage/damage_model.hpp"
 
 namespace skeet::rage {
 namespace {
@@ -179,13 +180,107 @@ RageSpreadBasis final_target_spread_basis(const RageVector& point,
     return {center, transverse.side, transverse.upper};
 }
 
+FinalHitchancePlan plan_experimental_hitchance(float minimum_chance) noexcept {
+    if (!std::isfinite(minimum_chance) || minimum_chance < 0 || minimum_chance > 1)
+        return {0, 1, 0};
+    // Count complete seed outcomes, not averaged pose votes. The required count
+    // must round upward; early rejection is valid only when it is unreachable.
+    constexpr unsigned samples = CompleteSpread::seed_count;
+    const auto required = std::max(1, std::int32_t(std::ceil(double(minimum_chance) * samples)));
+    return {samples, 1, std::int32_t(samples) - required + 1};
+}
+
+namespace {
+bool identical_seed_rays(const CompleteSpread* spread) {
+    if (!spread || !spread->valid || !spread->pellets ||
+        spread->pellets > CompleteSpread::maximum_pellets)
+        return false;
+    for (unsigned seed = 1; seed < CompleteSpread::seed_count; ++seed)
+        for (unsigned pellet = 0; pellet < spread->pellets; ++pellet)
+            if (spread->rays[seed][pellet].first != spread->rays[0][pellet].first ||
+                spread->rays[seed][pellet].second != spread->rays[0][pellet].second)
+                return false;
+    return true;
+}
+bool complete_seed_hit(BallisticEngine& engine, const FinalHitchanceSample& input,
+                       const BallisticQuery& base, unsigned seed) {
+    if (!input.complete_spread || !input.complete_spread->valid ||
+        seed >= CompleteSpread::seed_count || (input.damage_model && !input.damage_model->valid))
+        return false;
+    auto damage_for_pose = [&](std::span<const RageScanHitbox> geometry) {
+        float total = 0;
+        for (unsigned pellet = 0; pellet < input.complete_spread->pellets; ++pellet) {
+            const auto& spread = input.complete_spread->rays[seed][pellet];
+            RageVector direction;
+            for (unsigned axis = 0; axis < 3; ++axis)
+                direction[axis] = (spread.first * input.basis.first[axis] + input.basis.center[axis]) +
+                                  spread.second * input.basis.second[axis];
+            const auto magnitude = length(direction);
+            if (!std::isfinite(magnitude) || magnitude <= 0)
+                return 0.0f;
+            for (auto& value : direction)
+                value /= magnitude;
+            const auto hit = intersect_damage_ray(input.origin, direction, base.range,
+                                                   geometry, input.box_clipper);
+            if (!hit.found)
+                continue;
+            auto query = base;
+            if (input.live_bindings) {
+                final_target_detail::trace_projected(*input.live_bindings, engine, input,
+                                                      hit.position, query);
+            } else {
+                auto filter = input.projected_filter;
+                filter.mask = filter.exit_mask = 0x600400bU;
+                filter.minimum_damage = 1;
+                trace_ballistic_bullet(engine, input.source, input.origin, hit.position, filter, query);
+            }
+            // Retaining the starting armor for each pellet is a lower bound if
+            // earlier pellets exhaust it. Never invent damage from an averaged ray.
+            if (input.damage_model) {
+                total += bullet_health_damage(query.damage, hit.hitgroup, *input.damage_model);
+            } else {
+                const auto& target = input.legacy_target;
+                const auto scale = hitgroup_damage_scale(target.armor, target.helmet, hit.hitgroup,
+                                                         base.weapon_id, base.armor_ratio);
+                total += float(damage_lower_bound(query.damage * scale));
+            }
+        }
+        return total;
+    };
+    const auto qualifies = [&](std::span<const RageScanHitbox> geometry) {
+        const auto damage = damage_lower_bound(damage_for_pose(geometry));
+        return damage > 0 && damage >= input.minimum_damage;
+    };
+    if (!qualifies(input.primary))
+        return false;
+    if (input.safe)
+        for (const auto& hypothesis : input.hypotheses)
+            if (!qualifies(hypothesis))
+                return false;
+    return true;
+}
+unsigned seed_for_sample(const FinalHitchancePlan& plan, unsigned ordinal) {
+    return plan.samples == CompleteSpread::seed_count
+               ? ordinal : cached_spread_seed(ordinal * plan.sample_stride);
+}
+}
 void evaluate_final_hitchance_sample(BallisticEngine& engine, const FinalHitchanceSample& input,
                                      RageSpreadSample sample, std::int32_t failure_budget,
-                                     FinalHitchanceVotes& votes) {
+                                     FinalHitchanceVotes& votes, unsigned seed_ordinal) {
     if (votes.stopped.load(std::memory_order_relaxed))
         return;
-    auto query =
-        prepare_target_bullet(input.weapon, input.weapon_item_offset, input.allow_penetration);
+    auto query = input.captured_bullet ? *input.captured_bullet
+                                      : prepare_target_bullet(input.weapon, input.weapon_item_offset,
+                                                              input.allow_penetration);
+    if (input.complete_spread) {
+        const auto hit = complete_seed_hit(engine, input, query, seed_ordinal);
+        const auto packed = votes.packed.fetch_add((1u << 16) | unsigned(hit),
+                                                   std::memory_order_relaxed) + (1u << 16) + unsigned(hit);
+        const auto failures = (packed >> 16) - (packed & 0xffffU);
+        if (failures >= unsigned(failure_budget))
+            votes.stopped.store(1, std::memory_order_relaxed);
+        return;
+    }
     RageVector direction;
     for (std::size_t i = 0; i != 3; ++i)
         direction[i] = (sample.first * input.basis.first[i] + input.basis.center[i]) +
@@ -260,7 +355,13 @@ void evaluate_final_hitchance_sample(BallisticEngine& engine, const FinalHitchan
                 }
                 if (hit)
                     ++successes;
+                else if (input.robust_safe) {
+                    successes = 0;
+                    break;
+                }
             }
+            if (input.robust_safe)
+                successes = successes == 3 ? 1u : 0u;
             if (successes) {
                 auto filter = input.projected_filter;
                 filter.mask = filter.exit_mask = 0x600400bU;
@@ -280,7 +381,7 @@ void evaluate_final_hitchance_sample(BallisticEngine& engine, const FinalHitchan
             }
         }
     }
-    const auto increment = successes | ((input.safe ? 3U : 1U) << 16);
+    const auto increment = successes | ((input.safe && !input.robust_safe ? 3U : 1U) << 16);
     const auto packed = votes.packed.fetch_add(increment, std::memory_order_relaxed) + increment;
     const auto failures = std::bit_cast<std::int32_t>(packed) >> 16;
     if (failures - std::int32_t(packed & 0xffffU) > failure_budget)
@@ -305,9 +406,22 @@ RageHitchance evaluate_final_hitchance_inline(BallisticEngine& engine,
                                               std::span<const RageSpreadSample, 128> samples,
                                               const FinalHitchancePlan& plan) {
     FinalHitchanceVotes votes;
+    if (plan.samples != CompleteSpread::seed_count && plan.samples * plan.sample_stride > samples.size())
+        return {};
+    if (!input.complete_spread && plan.samples == CompleteSpread::seed_count)
+        return {};
+    if (plan.samples == CompleteSpread::seed_count && identical_seed_rays(input.complete_spread)) {
+        // Exact reduction for identical outcomes (including no-spread servers).
+        // It preserves the full probability without repeating identical traces.
+        evaluate_final_hitchance_sample(engine, input, {}, plan.failure_budget, votes, 0);
+        const bool hit = (votes.packed.load(std::memory_order_relaxed) & 0xffffU) != 0;
+        return {hit ? CompleteSpread::seed_count : 0u, hit ? 1.0f : 0.0f};
+    }
     for (std::size_t i = 0; i != plan.samples; ++i)
-        evaluate_final_hitchance_sample(engine, input, samples[i * plan.sample_stride],
-                                        plan.failure_budget, votes);
+        evaluate_final_hitchance_sample(engine, input,
+                                        input.complete_spread ? RageSpreadSample{} : samples[i * plan.sample_stride],
+                                        plan.failure_budget, votes,
+                                        input.complete_spread ? seed_for_sample(plan, unsigned(i)) : 0);
     return final_hitchance_fraction(votes, plan.failure_budget);
 }
 
@@ -318,6 +432,7 @@ struct FinalWork {
     RageSpreadSample sample;
     std::int32_t budget;
     FinalHitchanceVotes* votes;
+    unsigned ordinal;
 };
 struct FinalJobItem {
     FinalWork* work;
@@ -333,7 +448,7 @@ void final_sample_job(void* raw) {
 #endif
     const auto& work = *static_cast<FinalJobItem*>(raw)->work;
     evaluate_final_hitchance_sample(*work.engine, *work.input, work.sample, work.budget,
-                                    *work.votes);
+                                    *work.votes, work.ordinal);
 }
 }
 
@@ -342,11 +457,19 @@ RageHitchance evaluate_final_hitchance_parallel(BallisticEngine& engine,
                                                 std::span<const RageSpreadSample, 128> samples,
                                                 const FinalHitchancePlan& plan,
                                                 engine::JobDispatcher& jobs) {
+    if (identical_seed_rays(input.complete_spread))
+        return evaluate_final_hitchance_inline(engine, input, samples, plan);
     FinalHitchanceVotes votes;
-    std::array<FinalWork, 64> work;
-    std::array<FinalJobItem, 64> items;
+    if ((plan.samples != CompleteSpread::seed_count && plan.samples * plan.sample_stride > samples.size()) ||
+        (plan.samples == CompleteSpread::seed_count && !input.complete_spread))
+        return {};
+    std::array<FinalWork, CompleteSpread::seed_count> work;
+    std::array<FinalJobItem, CompleteSpread::seed_count> items;
     for (std::size_t i = 0; i != plan.samples; ++i) {
-        work[i] = {&engine, &input, samples[i * plan.sample_stride], plan.failure_budget, &votes};
+        work[i] = {&engine, &input,
+                   input.complete_spread ? RageSpreadSample{} : samples[i * plan.sample_stride],
+                   plan.failure_budget, &votes,
+                   input.complete_spread ? seed_for_sample(plan, unsigned(i)) : 0};
         items[i].work = &work[i];
     }
     auto task = jobs.create_eight(final_sample_job);
@@ -404,7 +527,14 @@ bool evaluate_target_hitchance_impl(FinalHitchanceContext& context,
                                     const lagcomp::LagRecord& record, std::int32_t minimum_damage,
                                     float minimum_chance, float& chance,
                                     final_target_detail::Producer* producer) {
-    if (context.weapon_flags & 0x4000U) {
+    const bool precise_damage = context.damage_context && context.damage_context->enabled;
+    const bool precise_samples = precise_damage || context.full_seed_hitchance;
+    if (precise_samples &&
+        (!std::isfinite(minimum_chance) || minimum_chance < 0 || minimum_chance > 1)) {
+        chance = 0;
+        return false;
+    }
+    if ((context.weapon_flags & 0x4000U) && !precise_samples) {
         chance = 1.0f;
         return true;
     }
@@ -412,6 +542,20 @@ bool evaluate_target_hitchance_impl(FinalHitchanceContext& context,
         return false;
     auto bullet = prepare_target_bullet(context.weapon, context.weapon_item_offset,
                                         context.allow_penetration);
+    BulletDamageModel model;
+    BallisticEntityInfo legacy_target{};
+    if (precise_samples && (!context.complete_spread || !context.complete_spread->valid)) {
+        chance = 0;
+        return false;
+    }
+    if (precise_damage) {
+        model = capture_damage_model(context.ballistics, context.target, *context.damage_context, bullet);
+        if (!model.valid) {
+            chance = 0;
+            return false;
+        }
+    } else if (precise_samples)
+        legacy_target = context.ballistics.entity_info(context.target);
     const auto delta = subtract(candidate.primary.position, context.origin);
     const auto basis = final_target_spread_basis(candidate.primary.position, context.origin);
     if (producer)
@@ -454,14 +598,25 @@ bool evaluate_target_hitchance_impl(FinalHitchanceContext& context,
         producer ? final_target_detail::select_studio_hitbox(context, *producer, candidate, record)
                  : (candidate.primary.flags & 1U) && (record.header.flags & 0x80U) &&
                        context.local_hitboxes[std::size_t(candidate.primary.hitbox)].radius > 0.0f;
-    const auto plan = plan_final_hitchance(
-        safe, minimum_chance, context.context_flags, candidate.entity_index,
-        producer ? producer->state.previous_targets : context.previous_targets);
+    if (producer && !producer->selected_descriptor) {
+        chance = 0;
+        return false;
+    }
+    const auto plan = context.full_seed_hitchance
+                          ? plan_experimental_hitchance(minimum_chance)
+                          : plan_final_hitchance(
+                                safe && !precise_samples, minimum_chance, context.context_flags, candidate.entity_index,
+                                producer ? producer->state.previous_targets : context.previous_targets);
     std::array<std::vector<RageScanHitbox>, 3> geometry;
+    std::vector<RageScanHitbox> primary_geometry;
     RageResolverHitboxes hypotheses;
     float minimum_multiplier = 0, base_damage = 0;
     lagcomp::EntityRecordScope scope(context.entity_runtime, context.target_player,
                                      context.saved_bones);
+    if (precise_samples)
+        primary_geometry = producer ? final_target_detail::hitbox_geometry(context, *producer, record.matrices)
+                                    : prepare_rage_scan_hitboxes(context.local_hitboxes, record.matrices,
+                                                                 context.trigonometry);
     if (safe) {
         if ((producer ? producer->frame.weapon_id_d8 : std::int32_t(bullet.weapon_id)) == 31)
             base_damage = 1;
@@ -485,10 +640,10 @@ bool evaluate_target_hitchance_impl(FinalHitchanceContext& context,
         }
         // The native consumer prepares the primary set before the three
         // resolver sets, retaining its engine descriptor and matrix ordering.
-        const auto primary =
-            producer ? final_target_detail::hitbox_geometry(context, *producer, record.matrices)
-                     : prepare_rage_scan_hitboxes(context.local_hitboxes, record.matrices,
-                                                  context.trigonometry);
+        if (!precise_samples)
+            primary_geometry = producer ? final_target_detail::hitbox_geometry(context, *producer, record.matrices)
+                                        : prepare_rage_scan_hitboxes(context.local_hitboxes, record.matrices,
+                                                                     context.trigonometry);
         for (std::size_t i = 0; i != 3; ++i) {
             geometry[i] = producer ? final_target_detail::hitbox_geometry(
                                          context, *producer, record.alternatives[i].matrices)
@@ -526,14 +681,18 @@ bool evaluate_target_hitchance_impl(FinalHitchanceContext& context,
                                context.box_clipper,
                                context.direction_filter,
                                context.projected_filter,
-                               producer ? &producer->bindings : nullptr};
+                               producer ? &producer->bindings : nullptr,
+                               precise_samples && safe,
+                               precise_damage ? &model : nullptr, primary_geometry,
+                               precise_samples ? context.complete_spread : nullptr,
+                               precise_samples ? &bullet : nullptr, legacy_target};
     const auto result =
         context.settings_menu.multithreading
             ? evaluate_final_hitchance_parallel(context.ballistics, input, context.samples, plan,
                                                 *context.jobs)
             : evaluate_final_hitchance_inline(context.ballistics, input, context.samples, plan);
     chance = result.fraction;
-    const bool accepted = !(minimum_chance > chance);
+    const bool accepted = !(minimum_chance > chance) && (!precise_samples || result.hits > 0);
     if (!accepted) {
         FinalHitchanceFailure failure{context.context_flags, context.weapon_flags,
                                       context.weapon,        candidate.primary.hitgroup,
@@ -571,14 +730,17 @@ TargetShotChoice select_target_for_shot(TargetBatch& batch,
                                         float point_penalty) {
     if (!batch.count)
         return {};
-    if ((context_flags & 0x10U) && weapon_id == 64 && (weapon_flags & 0x40U)) {
+    const auto* context = evaluations.empty() ? nullptr : evaluations.front().context;
+    const bool experimental = context && (context->full_seed_hitchance ||
+        (context->damage_context && context->damage_context->enabled));
+    if (!experimental && (context_flags & 0x10U) && weapon_id == 64 && (weapon_flags & 0x40U)) {
         batch.candidates[0]->primary.chance = 1.0f;
         return {batch.candidates[0], 0};
     }
     for (std::size_t i = 0; i != batch.count; ++i) {
         auto& candidate = *batch.candidates[i];
         float chance = 1.0f;
-        if (context_flags & 0x10U) {
+        if (experimental || (context_flags & 0x10U)) {
             const auto& evaluation = evaluations[i];
             const auto evaluate = [&] {
                 return evaluate_target_hitchance(*evaluation.context, candidate, *evaluation.record,

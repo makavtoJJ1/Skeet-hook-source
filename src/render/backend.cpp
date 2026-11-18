@@ -97,8 +97,8 @@ bool RendererBackend::prepare(D3DPRIMITIVETYPE primitive, IDirect3DBaseTexture9*
     return true;
 }
 
-// 433CBADB. Unconnected quads are individual triangle strips, four vertices
-// apiece. Connected strips and fans are emitted with one DrawPrimitive call.
+// Raw unconnected strips retain their original four-vertex format. Rectangle,
+// texture and text commands write quads as triangle lists so they can batch.
 void RendererBackend::draw(std::uint32_t count, std::uint32_t first) {
     device_->SetStreamSource(0, buffer_, 0, sizeof(RenderVertex));
     if (primitive_ == D3DPT_TRIANGLESTRIP && !connected_) {
@@ -151,6 +151,21 @@ void RendererBackend::flush(bool reset_start) {
 void RendererBackend::vertex(float x, float y, std::uint32_t color, float u, float v) {
     mapped_[count_++] = {x, y, depth_, color, u, v};
 }
+bool RendererBackend::quad(IDirect3DBaseTexture9* texture, float left, float top,
+                           float right, float bottom, const std::array<std::uint32_t, 4>& colors,
+                           float u0, float v0, float u1, float v1) {
+    if (!prepare(D3DPT_TRIANGLELIST, texture, 6, false))
+        return false;
+    // Keep the original strip's diagonal, winding, colors and UVs. Adjacent
+    // quads with the same state now share one DrawPrimitive call.
+    vertex(left, top, colors[0], u0, v0);
+    vertex(right, top, colors[1], u1, v0);
+    vertex(left, bottom, colors[2], u0, v1);
+    vertex(left, bottom, colors[2], u0, v1);
+    vertex(right, top, colors[1], u1, v0);
+    vertex(right, bottom, colors[3], u1, v1);
+    return true;
+}
 bool RendererBackend::append_vertices(D3DPRIMITIVETYPE primitive, IDirect3DBaseTexture9* texture,
                                       std::span<const RenderVertex> vertices, bool connected) {
     if (!prepare(primitive, texture, static_cast<std::uint32_t>(vertices.size()), connected))
@@ -162,23 +177,15 @@ bool RendererBackend::append_vertices(D3DPRIMITIVETYPE primitive, IDirect3DBaseT
 }
 
 void RendererBackend::rectangle(RectangleCommand c) { // 433E2C3F -> 433E99C8
-    if (!prepare(D3DPT_TRIANGLESTRIP, nullptr, 4, false))
-        return;
     const auto color = native_color(c.color);
     const auto right = float(add(c.x, c.width)), bottom = float(add(c.y, c.height));
-    vertex(float(c.x), float(c.y), color);
-    vertex(right, float(c.y), color);
-    vertex(float(c.x), bottom, color);
-    vertex(right, bottom, color);
+    quad(nullptr, float(c.x), float(c.y), right, bottom, {color, color, color, color});
 }
 void RendererBackend::four_color_gradient(FourColorGradientCommand c) { // 433D0FEC
-    if (!prepare(D3DPT_TRIANGLESTRIP, nullptr, 4, false))
-        return;
     const auto right = float(add(c.x, c.width)), bottom = float(add(c.y, c.height));
-    vertex(float(c.x), float(c.y), native_color(c.colors[0]));
-    vertex(right, float(c.y), native_color(c.colors[1]));
-    vertex(float(c.x), bottom, native_color(c.colors[3]));
-    vertex(right, bottom, native_color(c.colors[2]));
+    quad(nullptr, float(c.x), float(c.y), right, bottom,
+         {native_color(c.colors[0]), native_color(c.colors[1]), native_color(c.colors[3]),
+          native_color(c.colors[2])});
 }
 void RendererBackend::vertical_gradient(GradientCommand c) { // 43384795
     four_color_gradient({c.x,
@@ -286,7 +293,7 @@ void RendererBackend::texture(TextureCommand c) { // 43368EBB -> 433CCC5C
     if (c.texture == UINT32_MAX || c.texture >= textures_.size())
         return;
     const auto& record = textures_[c.texture];
-    if (!record.texture || !prepare(D3DPT_TRIANGLESTRIP, record.texture, 4, false))
+    if (!record.texture)
         return;
     auto width = c.source_width, height = c.source_height;
     if (c.scale != 1.0f) {
@@ -305,10 +312,8 @@ void RendererBackend::texture(TextureCommand c) { // 43368EBB -> 433CCC5C
     }
     const auto color = native_color(c.color);
     const auto right = float(add(c.x, width)), bottom = float(add(c.y, height));
-    vertex(float(c.x), float(c.y), color, u0, 0);
-    vertex(right, float(c.y), color, u1, 0);
-    vertex(float(c.x), bottom, color, u0, v1);
-    vertex(right, bottom, color, u1, v1);
+    quad(record.texture, float(c.x), float(c.y), right, bottom, {color, color, color, color},
+         u0, 0, u1, v1);
 }
 
 void RendererBackend::consume(std::span<const std::byte> commands) { // 4338AD28..4338AD51

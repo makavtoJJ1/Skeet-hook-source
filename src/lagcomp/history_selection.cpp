@@ -1,4 +1,5 @@
 #include "skeet/lagcomp/history_selection.hpp"
+#include "skeet/lagcomp/record_validity.hpp"
 #include "skeet/rage/targeting.hpp"
 #include "skeet/movement/extrapolation.hpp"
 #include <bit>
@@ -32,6 +33,10 @@ bool select_target_history_record(client::CommandFrame& frame, void* player,
                                                          options, destination, output_flags);
     if (!choice.source)
         return false;
+    if (extrapolation.validate_record &&
+        (!record_geometry_valid(*choice.source) ||
+         record_precedes_discontinuity(owner.history, choice.source->header.simulation_tick)))
+        return false;
     const auto plan =
         plan_history_extrapolation(owner.history, choice.ordinal, options, entity.interval,
                                    extrapolation.prediction_limit.value());
@@ -50,13 +55,14 @@ bool select_target_history_record(client::CommandFrame& frame, void* player,
         // the original requested time consumed by the field interpolation.
         interpolate_history_record(
             destination, *choice.source, *older,
-            float(extrapolation.movement.rework ? window.last : requested_tick) * entity.interval,
-            entity.interval, bindings.matrix_scratch, output_flags, bindings.rotation);
+            float(requested_tick) * entity.interval,
+            entity.interval, bindings.matrix_scratch, output_flags, bindings.rotation,
+            bindings.use_captured_endpoint_pose());
         effective_tick = window.last;
     }
     const bool had_alternatives = (choice.source->header.flags & 0x80u) != 0;
     if ((options & 1u) && !choice.ordinal && owner.history.count > 1) {
-        if (plan.ticks > 0 && !extrapolation.movement.rework) {
+        if (plan.ticks > 0) {
             const auto result = model_alternative_history_record(frame, player, owner, destination,
                                                                  plan.ticks, bindings.alternative);
             if (result < 0)
@@ -93,12 +99,13 @@ bool select_target_history_record(client::CommandFrame& frame, void* player,
             resolver_runtime::build_hypotheses(destination, input, context);
         }
     }
-    if (extrapolation.movement.rework && !(destination.header.flags & 4U))
-        return false;
     auto preparation = extrapolation.preparation;
     preparation.current_timing = &timing;
     refresh_record_attachments(extrapolation.players, player, destination, preparation,
                                extrapolation.attachments);
+    if (extrapolation.validate_record &&
+        (!record_time_valid(destination, timing) || !record_geometry_valid(destination)))
+        return false;
     if (selected_source && destination.header.field_00)
         *selected_source = choice.source;
     return true;

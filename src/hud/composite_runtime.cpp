@@ -28,6 +28,8 @@ bool draw_composite_frame(const CompositeFrameContext& context) {
     auto* queue = renderer->begin();
     if (!queue)
         return false;
+    for (auto* window = context.windows; window; window = window->next)
+        window->refresh_viewport();
     //433CC0D6 is CVTSS2SI, including the caller's current MXCSR rounding mode.
     const auto scaled = _mm_mul_ss(_mm_set_ss(context.scale), _mm_set_ss(350.0f));
     auto cursor = _mm_cvtss_si32(scaled);
@@ -41,7 +43,8 @@ bool draw_composite_frame(const CompositeFrameContext& context) {
     queue->set_alpha(1.0f);
     script::dispatch_paint_ui(context.scripts, *queue, cursor);
     for (auto* window = context.windows; window; window = window->next)
-        if ((window->input.mouse_flags & 1u) || window->transition_state)
+        if (!window->startup_placement_pending &&
+            ((window->input.mouse_flags & 1u) || window->transition_state))
             window->draw(*queue, context.accent);
     renderer->publish();
     return true;

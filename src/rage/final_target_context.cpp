@@ -1,11 +1,15 @@
 #include "skeet/rage/final_target_context.hpp"
 #include "skeet/rage/acquisition.hpp"
 #include "skeet/rage/preamble.hpp"
+#include "skeet/rage/experimental_validation.hpp"
+#include "skeet/rage/damage_model.hpp"
+#include "skeet/lagcomp/history_selection.hpp"
 #include "final_target_context_detail.hpp"
 #include "scanning_detail.hpp"
 #include "skeet/engine/interface_call.hpp"
 #include <bit>
 #include <cstring>
+#include <memory>
 
 namespace skeet::rage {
 namespace {
@@ -144,6 +148,9 @@ bool select_studio_hitbox(FinalHitchanceContext& context, Producer& producer,
     }
     // Native4341BB8D computes this descriptor even on regular points. A valid
     // selected studio set is its contract; a missing set is not substituted.
+    if (!set || candidate.primary.hitbox < 0 ||
+        candidate.primary.hitbox >= read<std::int32_t>(set, 4))
+        return false;
     const auto descriptor = static_cast<const std::byte*>(set) + read<std::int32_t>(set, 8) +
                             std::ptrdiff_t(candidate.primary.hitbox) * 0x44;
     producer.selected_descriptor = descriptor;
@@ -198,11 +205,45 @@ std::int32_t trace_teammate(const Producer& producer, FinalHitchanceContext& con
 }
 }
 
+bool FinalTargetContextBindings::validates_records() const noexcept {
+    return history && bool(history->extrapolation.validate_record);
+}
+bool FinalTargetContextBindings::precise_damage() const noexcept {
+    return scan.damage_context && scan.damage_context->enabled;
+}
+bool FinalTargetContextBindings::full_seed_hitchance() const noexcept {
+    return preamble && bool(preamble->settings.experimental(ExperimentalRageOption::hitchance));
+}
+
 bool evaluate_final_target(client::CommandFrame& frame, PreambleState& state,
                            const TargetCandidate& candidate,
                            const AcquisitionEvaluation& evaluation, std::uint32_t& context_flags,
                            const FinalTargetContextBindings& bindings, float& chance) {
-    if (frame.flags & 0x4000U) {
+    const bool precise_damage = bindings.precise_damage();
+    const bool full_seed_hitchance = bindings.full_seed_hitchance();
+    const bool precise_samples = precise_damage || full_seed_hitchance;
+    const bool validates_records = bindings.validates_records();
+    if (validates_records) {
+        const auto& history = *bindings.history;
+        const lagcomp::HistoryTickTiming timing{
+            history.current_time, read<float>(&frame, 0x198), history.interpolation,
+            bindings.scan.preparation.entity.interval, history.maximum_unlag_ms,
+            read<std::int32_t>(&frame, 0xD4), std::bit_cast<std::int32_t>(frame.field_18c)};
+        const auto* player = candidate.entity_index && candidate.entity_index <= 64
+                                 ? bindings.scan.players.get(candidate.entity_index) : nullptr;
+        if (!player || !experimental_target_valid(
+                           candidate, evaluation.record, player->history, timing, frame.origin_dc,
+                           frame.spread_d0, frame.inaccuracy_c4,
+                           std::bit_cast<std::int32_t>(evaluation.settings.words[5]),
+                           std::bit_cast<float>(evaluation.settings.words[6]))) {
+            chance = 0;
+            return false;
+        }
+    }
+    const bool stock_revolver_bypass = (context_flags & 0x10U) && frame.weapon_id_d8 == 64 &&
+                                       (frame.flags & 0x40U);
+    if (!precise_samples && ((frame.flags & 0x4000U) ||
+        (validates_records && (!(context_flags & 0x10U) || stock_revolver_bypass)))) {
         chance = 1.0f;
         return true;
     }
@@ -210,6 +251,29 @@ bool evaluate_final_target(client::CommandFrame& frame, PreambleState& state,
     auto* target = engine::invoke<void*>(scan.targeting.entity_list, 3, candidate.entity_index);
     if (!target)
         return false;
+    std::unique_ptr<CompleteSpread> complete;
+    if (precise_samples) {
+        if ((precise_damage && !scan.damage_context->valid) || !bindings.preamble) {
+            chance = 0;
+            return false;
+        }
+        const auto& preamble = *bindings.preamble;
+        SpreadParameters parameters{
+            std::uint32_t(frame.weapon_id_d8), std::int32_t(frame.field_b0), frame.spread_d0,
+            context_flags & 8U ? std::bit_cast<float>(frame.field_160) - frame.spread_d0
+                               : frame.inaccuracy_c4,
+            std::bit_cast<float>(frame.field_100), frame.pellet_count_19c,
+            preamble.shotgun_patterns, frame.weapon_kind_124};
+        // weapon_accuracy_nospread removes dispersion, not the damage test.
+        if (frame.flags & 0x4000U)
+            parameters.spread = parameters.inaccuracy = 0;
+        complete = std::make_unique<CompleteSpread>();
+        if (!prepare_complete_spread(*complete, parameters, preamble.spread_tables,
+                                      preamble.random, preamble.pattern, preamble.trigonometry)) {
+            chance = 0;
+            return false;
+        }
+    }
     final_target_detail::Producer producer{bindings, frame, state, {}, nullptr};
     FinalHitchanceContext context{
         .ballistics = scan.ballistics,
@@ -245,6 +309,9 @@ bool evaluate_final_target(client::CommandFrame& frame, PreambleState& state,
         .samples = state.spread.primary,
         .settings_menu = bindings.settings_menu,
         .jobs = bindings.jobs,
+        .full_seed_hitchance = full_seed_hitchance,
+        .damage_context = scan.damage_context,
+        .complete_spread = complete.get(),
     };
     return evaluate_target_hitchance(context, candidate, evaluation.record,
                                      std::bit_cast<std::int32_t>(evaluation.settings.words[5]),

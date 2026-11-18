@@ -30,7 +30,7 @@
       "targets": [
         "skeet_core"
       ],
-      "jobs": 4
+      "jobs": 2
     },
     {
       "name": "source-dll-x86",
@@ -40,7 +40,7 @@
         "skeet_client",
         "skeet_core_linkcheck"
       ],
-      "jobs": 4
+      "jobs": 2
     }
   ]
 }

@@ -7,7 +7,6 @@
 #include "skeet/lagcomp/extrapolated_record.hpp"
 #include "skeet/lagcomp/history_selection.hpp"
 #include "skeet/animation/bone_runtime.hpp"
-#include "skeet/esp/extrapolation_preview.hpp"
 #include <optional>
 #include <vector>
 
@@ -119,7 +118,6 @@ struct AcquisitionStorage {
     AcquisitionEvaluations evaluations;
     std::array<std::optional<ScanRequest>, 80> requests;
     AcquisitionQueue queued;
-    esp::ExtrapolationPreview extrapolation_preview;
 };
 struct PreambleState;
 struct PreambleResult;

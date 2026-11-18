@@ -284,7 +284,6 @@ struct EffectsRuntimeOwner::Data {
                    history.game_type(),
                    history.teammates_are_enemies(),
                    source.engine.variables.at(0x43467A78u),
-                   source.storage.data().native_cell<void*>(0x434685B8u),
                    {source.storage.data().native_cell<anti_aim::CommandOwner*>(0x43475940u),
                     source.storage.data().native_cell<const std::int32_t*>(0x43475B2Cu),
                     source.storage.data().native_cell<float>(0x43475890u),

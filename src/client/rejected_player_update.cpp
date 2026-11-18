@@ -60,9 +60,9 @@ std::uint32_t coordinate(float value) noexcept {
 
 // Five chained 16-bit pairs start at packet+2. The fifth pair's right word
 // aliases the saved player index at packet+20 in the native stack frame.
-// Its encrypted value is subsequently committed as owner.last_player.
-std::int32_t mix_packet(std::array<std::byte, 20>& packet, std::int32_t selected,
-                        std::uint32_t key) noexcept {
+// Only the 20 wire bytes are published; the scan cursor remains an entity index.
+void mix_packet(std::array<std::byte, 20>& packet, std::int32_t selected,
+                std::uint32_t key) noexcept {
     std::array<std::uint16_t, 11> words{};
     std::memcpy(words.data(), packet.data(), packet.size());
     words[10] = static_cast<std::uint16_t>(selected);
@@ -86,7 +86,6 @@ std::int32_t mix_packet(std::array<std::byte, 20>& packet, std::int32_t selected
         previous_right = right;
     }
     std::memcpy(packet.data(), words.data(), packet.size());
-    return signed_bits((std::uint32_t(selected) & 0xffff0000u) | words[10]);
 }
 
 RageVector shared_origin(PlayerState& state, const void* player,
@@ -145,7 +144,7 @@ void publish(RejectedPlayerUpdateOwner& owner, void* selected, std::int32_t inde
     }
     std::array<std::byte, 20> packet{};
     std::memcpy(packet.data(), words.data(), packet.size());
-    const auto stored_index = mix_packet(packet, index, owner.mixing_key);
+    mix_packet(packet, index, owner.mixing_key);
     transform_shared_esp_packet(context.packet_cipher, owner, packet);
     std::memcpy(words.data(), packet.data(), packet.size());
     auto* channel = engine::invoke<void*>(owner.engine_client, 78);
@@ -164,7 +163,7 @@ void publish(RejectedPlayerUpdateOwner& owner, void* selected, std::int32_t inde
         owner.destroy_message(message);
     }
     leave_shared_esp_update(context);
-    owner.last_player = stored_index;
+    owner.last_player = index;
     owner.last_update = context.current_time;
 }
 } // namespace
@@ -225,8 +224,8 @@ void update_rejected_player(void* player, const RejectedPlayerUpdateContext& con
         field<std::uint8_t>(*context.game_rules, context.offsets.rule_d720aea6))
         return;
     auto index = signed_bits(std::uint32_t(owner->last_player) + 1u);
-    for (std::int32_t iteration = 1; iteration < context.maximum_clients; ++iteration) {
-        if (index >= context.maximum_clients)
+    for (std::int32_t iteration = 1; iteration <= context.maximum_clients; ++iteration) {
+        if (index > context.maximum_clients)
             index = 1;
         auto* candidate = engine::invoke<void*>(context.entity_list, 3, index);
         if (candidate && engine::invoke<bool>(candidate, 158) &&
@@ -234,7 +233,7 @@ void update_rejected_player(void* player, const RejectedPlayerUpdateContext& con
             !engine::invoke<bool>(static_cast<std::byte*>(candidate) + 8, 9) &&
             !field<std::uint8_t>(candidate, context.offsets.rejected_9d920e35) &&
             engine::invoke<std::int32_t>(candidate, 122) > 0 &&
-            !context.players.records[std::size_t(iteration)].adjustments.whitelist &&
+            !context.players.records[std::size_t(index)].adjustments.whitelist &&
             (context.settings.other_team.value ||
              rage::target_is_enemy(context.targeting.capture(player), candidate))) {
             publish(*owner, candidate, index, context);

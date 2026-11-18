@@ -59,6 +59,21 @@ std::optional<ConfigRecordView> find_config_record(std::span<const std::byte> st
     return {};
 }
 
+bool valid_config_stream(std::span<const std::byte> stream) noexcept {
+    if (stream.size() < 12 || read32(stream, 0) != config_stream_magic)
+        return false;
+    auto remaining = stream.subspan(12);
+    while (!remaining.empty()) {
+        if (remaining.size() < 8)
+            return false;
+        const auto size = read16(remaining, 0);
+        if (remaining.size() - 8 < size)
+            return false;
+        remaining = remaining.subspan(8 + size);
+    }
+    return true;
+}
+
 void initialize_config_stream(ConfigBytes& stream) {
     stream.resize(12);
     write32(stream, 0, config_stream_magic);

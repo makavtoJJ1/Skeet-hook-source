@@ -1,5 +1,6 @@
 #include "skeet/rage/spread.hpp"
 #include <bit>
+#include <cmath>
 #include <xmmintrin.h>
 
 namespace skeet::rage {
@@ -122,5 +123,64 @@ std::array<RageSpreadSample, 32> hitchance_spread_samples(const SpreadCache& cac
     for (unsigned i = 0; i < 32; ++i)
         result[i] = cache.compensated[i * 4];
     return result;
+}
+std::uint32_t cached_spread_seed(std::uint32_t index) noexcept {
+    return cache_seeds[index];
+}
+bool prepare_complete_spread(CompleteSpread& result, const SpreadParameters& parameters,
+                              const SpreadTables& tables, const SpreadRandom& random,
+                              const ShotgunPattern& pattern, const RageTrigonometry& trig) {
+    result.valid = false;
+    result.pellets = 0;
+    if (parameters.pellet_count < 1 || parameters.pellet_count > int(CompleteSpread::maximum_pellets) ||
+        !std::isfinite(parameters.inaccuracy) || parameters.inaccuracy < 0 ||
+        !std::isfinite(parameters.spread) || parameters.spread < 0 ||
+        !std::isfinite(parameters.recoil_index) || parameters.recoil_index < 0 ||
+        parameters.recoil_index > 100000)
+        return false;
+    const unsigned pellets = unsigned(parameters.pellet_count);
+    if (pellets == 1) {
+        if (!tables.standard.data() || !tables.shotgun_patterns.data())
+            return false;
+        for (unsigned seed = 0; seed < CompleteSpread::seed_count; ++seed)
+            result.rays[seed][0] = generate_spread_sample(parameters, seed, tables, random, pattern, trig);
+    } else {
+        if (!random.seed || !random.uniform || (parameters.shotgun_patterns && !pattern.get))
+            return false;
+        // Installed server.dll RVA 4C4BA6..4C4F64 seeds once per shot. Without
+        // patterns, pellets share the first inaccuracy draw; their spread draws
+        // advance the stream. Pattern mode draws inaccuracy for every pellet.
+        const auto first_pellet = int(parameters.recoil_index) * int(pellets);
+        for (unsigned seed = 0; seed < CompleteSpread::seed_count; ++seed) {
+            random.seed(random.context, int(seed + 1));
+            SpreadSeed sample{};
+            for (unsigned pellet = 0; pellet < pellets; ++pellet) {
+                if (!pellet || parameters.shotgun_patterns) {
+                    sample.first_radius = random.uniform(random.context, 0, 1);
+                    const auto angle = random.uniform(random.context, 0, full_turn);
+                    sample.first_sine = trig.sine(angle);
+                    sample.first_cosine = trig.cosine(angle);
+                }
+                float angle = 0;
+                if (parameters.shotgun_patterns) {
+                    sample.second_radius = 0;
+                    pattern.get(pattern.context, parameters.weapon_id, parameters.fire_mode,
+                                first_pellet + int(pellet), angle, sample.second_radius);
+                } else {
+                    sample.second_radius = random.uniform(random.context, 0, 1);
+                    angle = random.uniform(random.context, 0, full_turn);
+                }
+                sample.second_sine = trig.sine(angle);
+                sample.second_cosine = trig.cosine(angle);
+                result.rays[seed][pellet] = combine(sample, parameters, limit_inaccuracy(parameters.inaccuracy));
+            }
+        }
+    }
+    for (const auto& seed : result.rays)
+        for (unsigned pellet = 0; pellet < pellets; ++pellet)
+            if (!std::isfinite(seed[pellet].first) || !std::isfinite(seed[pellet].second))
+                return false;
+    result.pellets = pellets;
+    return result.valid = true;
 }
 } // namespace skeet::rage

@@ -150,8 +150,6 @@ void multipoint_key(void* context) { //4349376A,43469400
 void rage_enabled(void* context) { //434937B3,43467214
     auto& source = bindings(context);
     append(source, source.rage.enabled);
-    append(source, source.rage.extrapolation_rework);
-    append(source, source.rage.extrapolation_visualize);
 }
 void silent_aim(void* context) { //434937CD,434684D0
     auto& source = bindings(context);

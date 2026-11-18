@@ -61,6 +61,8 @@ void Widget::notify_callbacks() { // 0x4334E09F
 void Widget::set_visible(bool requested) { // 0x433E000B
     if (visible != requested) {
         visible = requested;
+        if (!visible)
+            reset_input();
         if (parent)
             parent->visibility_changed();
     }

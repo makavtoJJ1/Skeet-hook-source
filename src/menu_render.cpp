@@ -141,10 +141,24 @@ void Category::draw(RenderQueue& queue, Point origin, std::uint32_t accent) cons
     const Point content{position.x, sub(position.y, offset)};
     {
         std::shared_lock lock(elements_mutex); // RtlAcquireSRWLockShared / RtlReleaseSRWLockShared
-        for (auto* child : draw_order())
-            if (child->visible &&
-                child->geometry.bounds.y >= sub(offset, child->geometry.bounds.height))
-                child->draw(queue, content, accent);
+        const auto bottom = add(b.height, offset);
+        std::array<Widget*, 1024> ordered, scratch;
+        std::size_t visible_count = 0, draw_count = 0;
+        for (auto* child : std::span(elements)) {
+            const auto& bounds = child->geometry.bounds;
+            const auto child_bottom = add(bounds.y, bounds.height);
+            if (child_bottom < offset || bottom < child_bottom)
+                child->reset_input();
+            if (!child->visible || visible_count == ordered.size())
+                continue;
+            ++visible_count;
+            if (bounds.y <= bottom && child_bottom >= offset)
+                ordered[draw_count++] = child;
+        }
+        const auto on_screen = std::span(ordered).first(draw_count);
+        sort_draw(on_screen, std::span(scratch).first(draw_count));
+        for (auto* child : on_screen)
+            child->draw(queue, content, accent);
     }
     if (had_bounds)
         queue.set_bounds(saved_bounds);

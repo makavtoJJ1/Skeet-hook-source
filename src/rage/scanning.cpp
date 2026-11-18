@@ -93,6 +93,31 @@ float safe_multiplier(const ScanContext& context, const ScanPolicy& policy, std:
 }
 }
 namespace scan_detail {
+DamageRayResult damage_ray(const ScanContext& context, BallisticEntity target,
+                            const Geometry& geometry, const RageVector& direction,
+                            const BallisticQuery& bullet, bool safe) {
+    const auto model = capture_damage_model(context.ballistics, target, *context.damage_context, bullet);
+    anti_aim::TargetTraceFilter native_filter(context.trace_filter_vtable, context.trace_entities,
+                                              0x600400bU, 0x600400bU, 1.0f);
+    const auto filter = native_filter.binding();
+    auto result = trace_damage_ray(context.ballistics, context.source, context.origin, direction,
+                                   geometry.primary, context.box_clipper, filter, bullet, model);
+    if (safe && result.health_damage > 0) {
+        for (const auto& pose : geometry.alternatives) {
+            const auto trial = trace_damage_ray(context.ballistics, context.source, context.origin,
+                                                 direction, pose, context.box_clipper, filter,
+                                                 bullet, model);
+            result.health_damage = std::min(result.health_damage, trial.health_damage);
+            if (result.health_damage <= 0)
+                break;
+        }
+    }
+    // Proposal bound only: the final stage traces each pellet separately.
+    // Do not let a one-pellet scan eliminate an otherwise viable shotgun shot.
+    if (bullet.reserved > 1 && bullet.reserved <= 16)
+        result.health_damage *= float(bullet.reserved);
+    return result;
+}
 RageSpreadBasis spread_basis(const RageVector& axis) noexcept {
     const auto basis = rage_point_detail::basis_from_axis(axis);
     return {axis, basis.side, basis.upper};
@@ -112,6 +137,15 @@ ProjectedPoint project(const ScanContext& context, const Geometry& geometry,
     const auto delta = rage_point_detail::subtract(point, context.origin);
     result.direction = rage_point_detail::normalize(
         delta, std::sqrt((delta[0] * delta[0] + delta[1] * delta[1]) + delta[2] * delta[2]));
+    if (precise_damage(context)) {
+        const auto hit = intersect_damage_ray(context.origin, result.direction, range,
+                                              geometry.primary, context.box_clipper);
+        result.position = hit.position;
+        result.hitbox = hit.hitbox;
+        result.hitgroup = hit.hitgroup;
+        result.found = hit.found;
+        return result;
+    }
     const auto scale = range / (rage_point_detail::length(result.direction) + 0x1p-23f);
     const RageVector extended{result.direction[0] * scale, result.direction[1] * scale,
                               result.direction[2] * scale};
@@ -185,7 +219,7 @@ void scan_candidate(ScanContext& context, ScanRequest& request) {
         const auto flags = descriptor.flags | request.descriptor_flags;
         if (projected.found && projected.hitgroup == descriptor.hitgroup) {
             bool safe = true;
-            if (flags & 1U) {
+            if ((flags & 1U) && !scan_detail::precise_damage(context)) {
                 const auto minimum =
                     safe_multiplier(context, policy, candidate.health, target, bullet, projected);
                 RageVector direction;
@@ -200,12 +234,24 @@ void scan_candidate(ScanContext& context, ScanRequest& request) {
                     float(policy.minimum_damage) /
                         rage_detail::hitgroup_multipliers[std::uint32_t(projected.hitgroup) & 15U]);
                 const auto filter = native_filter.binding();
-                trace_ballistic_bullet(context.ballistics, context.source, context.origin,
-                                       projected.position, filter, bullet);
-                if (_mm_cvttss_si32(_mm_set_ss(bullet.damage)) > 0) {
+                DamageRayResult exact;
+                if (scan_detail::precise_damage(context)) {
+                    exact = scan_detail::damage_ray(context, target, geometry, projected.direction,
+                                                     bullet, (flags & 1U) != 0);
+                    bullet.damage = exact.health_damage;
+                    bullet.flags = exact.flags;
+                } else {
+                    trace_ballistic_bullet(context.ballistics, context.source, context.origin,
+                                           projected.position, filter, bullet);
+                }
+                if (scan_detail::precise_damage(context)
+                        ? std::isfinite(bullet.damage) && bullet.damage > 0
+                        : _mm_cvttss_si32(_mm_set_ss(bullet.damage)) > 0) {
                     const auto info = context.ballistics.entity_info(target);
                     point.position = descriptor.position;
-                    point.damage = final_bullet_damage(bullet.damage, bullet.armor_ratio,
+                    point.damage = scan_detail::precise_damage(context)
+                                       ? damage_lower_bound(bullet.damage)
+                                       : final_bullet_damage(bullet.damage, bullet.armor_ratio,
                                                        std::bit_cast<std::int32_t>(bullet.reserved),
                                                        bullet.weapon_id, projected.hitgroup,
                                                        info.armor, info.helmet);

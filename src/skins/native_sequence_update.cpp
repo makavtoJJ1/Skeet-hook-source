@@ -320,7 +320,7 @@ void NativeSequenceRuntime::process(void* player, std::uintptr_t incoming) {
                 engine::invoke<void>(bindings_.model_cache, 34);
                 if (tag)
                     refresh_.schedule_full_update(refresh_.current_time() + 0.25f);
-            } else if (entity_class == state_.viewmodel_class) {
+            } else if (entity_class == state_.weapon_world_model_class) {
                 local = bindings_.receive.local_player;
                 if (!local)
                     continue;

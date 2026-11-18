@@ -73,11 +73,19 @@ void transform(HitboxMatrices& destination, const HitboxMatrices& source,
 float interpolate_history_record(LagRecord& destination, const LagRecord& newer,
                                  const LagRecord& older, float requested_time, float interval,
                                  const HistoryMatrixScratch& incoming, std::uint32_t& output_flags,
-                                 const RotationMath& math) {
+                                 const RotationMath& math, bool use_captured_endpoint_pose) {
     Vector angles;
     const float fraction = interpolate_history_fields(destination, newer, older, requested_time,
                                                       interval, math, &angles);
-    if (older.header.flags & 4u) {
+    if (use_captured_endpoint_pose && fraction == 1.0f) {
+        // Accuracy boost can reach this path at the exact newer tick.
+        destination.header.animation_yaw = newer.header.animation_yaw;
+        destination.header.flags = (destination.header.flags & ~0x84u) | (newer.header.flags & 0x84u);
+        destination.animation = newer.animation;
+        destination.matrices = newer.matrices;
+        if (newer.header.flags & 0x80u)
+            destination.alternatives = newer.alternatives;
+    } else if (older.header.flags & 4u) {
         HistoryMatrixScratch scratch;
         std::memcpy(&scratch, &incoming, sizeof scratch);
         const auto inverse =

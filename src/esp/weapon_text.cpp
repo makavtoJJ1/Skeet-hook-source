@@ -48,8 +48,11 @@ void draw_weapon_text(ui::RenderQueue& queue, WeaponTextProvider provider, std::
         const auto length = std::char_traits<char16_t>::length(localized);
         if (length >= wide.size())
             throw std::length_error("Weapon localization exceeds native label storage");
-        std::copy_n(localized, length, wide.begin());
-        _wcsupr_s(wide.data(), wide.size());
+        // Unicode casing must not depend on the process's CRT locale.
+        if (!LCMapStringEx(LOCALE_NAME_INVARIANT, LCMAP_UPPERCASE,
+                           reinterpret_cast<const wchar_t*>(localized), int(length + 1),
+                           wide.data(), int(wide.size()), nullptr, nullptr, 0))
+            throw std::runtime_error("Weapon localization uppercase conversion failed");
         queue.text(sub(position.x, 1), position.y, color, 0x14, 0,
                    {reinterpret_cast<const char16_t*>(wide.data()), std::wcslen(wide.data())});
         if (measured_size)

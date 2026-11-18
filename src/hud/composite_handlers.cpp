@@ -29,11 +29,6 @@ void LiveRageHudBinding::draw(ui::RenderQueue& queue, void* player, std::int32_t
             esp::draw_indicator(scripts, queue, cursor, "MD", 0xc8ffffffu, layout, -1, -1.0f);
     }
     esp::draw_live_hitbox_highlight(queue, visualization, highlight, player, highlight_context);
-    if (player && extrapolation_preview && global.extrapolation_rework.value &&
-        global.extrapolation_visualize.value && highlight_context.active &&
-        !highlight_context.life_state(player))
-        if (const auto box = extrapolation_preview->snapshot())
-            esp::draw_extrapolation_preview(queue, highlight_context.projection, *box);
 }
 void ExploitHudBinding::draw(ui::RenderQueue& queue, void* player, std::int32_t& cursor) const {
     draw_exploit_indicators(queue, scripts, state, shared_timer, indicators, player, interfaces,

@@ -3,7 +3,6 @@
 #include "skeet/rage/final_target_context.hpp"
 #include "skeet/rage/post_firing.hpp"
 #include "skeet/legit/runtime.hpp"
-#include "skeet/movement/extrapolation.hpp"
 #include <algorithm>
 #include "targeting_pipeline_detail.hpp"
 #include <bit>
@@ -48,36 +47,7 @@ void publish_firing_state(client::CommandFrame& frame, const FiringState& state)
     frame.origin_dc = state.origin;
     frame.view_height_84 = state.field_84;
 }
-void update_extrapolation_preview(AcquisitionStorage& storage, const TargetCandidate* candidate,
-                                  const AcquisitionRecordBindings& records,
-                                  const TargetBindings& targets, const GlobalSettings& settings) {
-    storage.extrapolation_preview.clear();
-    if (!candidate || !settings.extrapolation_rework.value ||
-        !settings.extrapolation_visualize.value)
-        return;
-    const auto& evaluation = acquisition_evaluation_for(storage, *candidate);
-    if (evaluation.extrapolated) {
-        storage.extrapolation_preview.publish(evaluation.record);
-        return;
-    }
-    if (!candidate->entity_index || candidate->entity_index > 64)
-        return;
-    const auto* history = records.players.get(candidate->entity_index);
-    if (!history || history->history.count < 3)
-        return;
-    const auto& newest = history->history.at(0).header;
-    const auto gap =
-        std::int64_t(newest.simulation_tick) - history->history.at(1).header.simulation_tick;
-    if (gap < 1 || gap > 16)
-        return;
-    auto* player = engine::invoke<void*>(targets.entity_list, 3, candidate->entity_index);
-    const auto forecast = forecast_extrapolation_hull(
-        player, *history, std::int32_t(gap), records.extrapolation.movement, records.live_movement);
-    if (forecast)
-        storage.extrapolation_preview.publish(esp::ExtrapolationPreviewBox{
-            {forecast->position.x, forecast->position.y, forecast->position.z},
-            forecast->hull_maximum.z});
-}
+
 }
 void process_rage_command_phase2(CommandOwner& owner, void* player, void* weapon,
                                  client::Command& command, std::array<float, 3>& incoming,
@@ -99,12 +69,10 @@ void process_rage_command(CommandOwner& owner, client::CommandFrame& original, v
     auto preamble = prepare_rage_command(state, original, command, player, storage, owner.preamble);
     switch (preamble.continuation) {
     case PreambleContinuation::no_weapon:
-        storage.extrapolation_preview.clear();
         finish_rage_command(state, preamble, original, player, owner.tail,
                             PreambleTailEntry::return_only);
         return;
     case PreambleContinuation::inactive:
-        storage.extrapolation_preview.clear();
         finish_rage_command(state, preamble, original, player, owner.tail,
                             PreambleTailEntry::actions);
         return;
@@ -135,14 +103,8 @@ void process_rage_command(CommandOwner& owner, client::CommandFrame& original, v
     if (acquired)
         batch = rank_completed_target_candidates(storage.candidates, state.completed, state.flags,
                                                  state.target_mask, scanner.targeting);
-    const FinalTargetContextBindings final_target{scanner, owner.final_target.current_bone_counter,
-                                                  owner.settings_menu, owner.final_target.jobs};
+    const auto final_target = owner.final_target.with_scan(scanner);
     auto choice = select_acquired_target_for_shot(batch, storage, frame, state, final_target);
-    update_extrapolation_preview(storage,
-                                 choice.candidate ? choice.candidate
-                                                  : (batch.count ? batch.candidates[0] : nullptr),
-                                 single ? current.single.records : current.multiple.records,
-                                 scanner.targeting, owner.preamble.settings);
     RageShotCommitState commit{state.flags, owner.preamble.scheduler_flags,
                                owner.preamble.selected_marker, send_packet};
     TargetFiringResult firing{

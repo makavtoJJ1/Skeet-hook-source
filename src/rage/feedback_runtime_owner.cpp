@@ -205,7 +205,7 @@ struct FeedbackRuntimeOwner::Data {
                s.data().native_cell<float>(0x43469254u),
                s.data().native_cell<float>(0x43476928u),
                c.settings_menu().maximum_unlag,
-               nullptr},
+               c.rage_settings().global.experimental(ExperimentalRageOption::resolver)},
           packet{c.rage_settings().global.enabled.value,
                  c.rage_settings().global.anti_aim_correction.value,
                  s.data().native_cell<void*>(0x4346A894u),
@@ -229,7 +229,9 @@ struct FeedbackRuntimeOwner::Data {
               s.data().native_cell<float*>(0x4346A338u),
               &s.data().native_cell<std::uint32_t>(0x434759C0u),
               attempts,
-              nullptr},
+              c.rage_settings().global.experimental(ExperimentalRageOption::resolver),
+              {&c.rage_settings().global.jitter_fix.value,
+               &c.rage_settings().global.experimental_rage.value}},
           factory{registry(s, 0x43475B78u),
                   s.command_phases(),
                   s.entity_observers(),
@@ -246,7 +248,9 @@ struct FeedbackRuntimeOwner::Data {
                   packet,
                   *s.data().native_cell<std::int32_t*>(0x43475B2Cu),
                   s.data().native_cell<void*>(0x4346A514u),
-                  s.data().native_cell<FeedbackOwner*>(0x43475A7Cu)} {}
+                  s.data().native_cell<FeedbackOwner*>(0x43475A7Cu)} {
+        runtime.resolver_rework = c.rage_settings().global.experimental(ExperimentalRageOption::resolver);
+    }
 };
 FeedbackRuntimeOwner::FeedbackRuntimeOwner(
     ClientRuntimeStorage& s, const client::EngineRuntimeBindings& e,

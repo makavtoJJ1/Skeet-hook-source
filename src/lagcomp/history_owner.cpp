@@ -71,7 +71,8 @@ HistoryRecordingBindings recording_bindings(const HistoryRecordingBindings& sour
 
 HistoryOwnerRuntime::HistoryOwnerRuntime(HistoryOwnerRuntime*& active,
                                          HistoryOwnerBindings bindings)
-    : bindings_(bindings), active_(&active), physics_(bindings.recording.velocity.reconstruction),
+    : bindings_(bindings), active_(&active), configuration_(bindings.recording.configuration),
+      physics_(bindings.recording.velocity.reconstruction),
       velocity_{bindings.recording.velocity.entity, physics_,
                 bindings.recording.velocity.maximum_velocity_convar,
                 bindings.recording.velocity.landing_limit_convar},
@@ -98,7 +99,6 @@ HistoryOwnerRuntime::HistoryOwnerRuntime(HistoryOwnerRuntime*& active,
     configuration_.target_hitboxes = nullptr;
     configuration_.recording_enabled = recording_.activation.recording_enabled;
     configuration_.resolver_enabled = &recording_.globals.transition_enabled;
-    configuration_.rework = bindings.recording.configuration.rework;
     configuration_.prediction_available = 0;
     configuration_.engine = recording_.entity.engine; //captured4346A514, full+40
     first_activity_ = 0x3D3;

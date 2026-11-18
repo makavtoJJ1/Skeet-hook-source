@@ -109,17 +109,7 @@ void PresetRuntime::after_values_load() { // 4338A0E9
 }
 void PresetRuntime::after_named_load() { // 4332F0AC
     auto& state = rage();
-    state.last_group = UINT32_MAX;
-    if (*selected_group_ >= state.groups.size())
-        return;
-    if (state.groups[0]->value.empty()) {
-        ConfigBytes changes;
-        ui::save_category_config(window_, state.registry, "rage", "aimbot", changes,
-                                 state.baseline_a.bytes(), state.baseline_b.bytes());
-        if (changes.size() > 12)
-            state.groups[0]->value = std::move(changes);
-    }
-    ui::switch_rage_weapon_group(state, selected_group_);
+    ui::reload_rage_weapon_groups_from_preset(state, *selected_group_);
 }
 void PresetRuntime::persist_settings() {
     (void)persistence_.persist(0, 0);

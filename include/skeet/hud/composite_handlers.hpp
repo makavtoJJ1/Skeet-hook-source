@@ -1,5 +1,4 @@
 #pragma once
-#include "skeet/esp/extrapolation_preview.hpp"
 #include "composite_runtime.hpp"
 #include "crosshair.hpp"
 #include "feature_indicators.hpp"
@@ -87,7 +86,6 @@ struct LiveRageHudBinding { //43472C54 ->4337F589, actual incoming local entity
     const esp::AimbotVisualizationConfig& visualization;
     esp::HitboxHighlightState& highlight;
     const esp::HitboxHighlightEngineContext& highlight_context;
-    const esp::ExtrapolationPreview* extrapolation_preview = nullptr;
     void draw(ui::RenderQueue&, void*, std::int32_t&) const;
 };
 struct ExploitHudBinding { //43472688 ->433E1B2F

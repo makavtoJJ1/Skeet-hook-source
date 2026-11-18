@@ -9,6 +9,12 @@ bool Runtime::dispatch(ui::WindowMessage& original) { // 0x43405C69
         return false;
     auto message = original;
     auto& input = message.input;
+    // These messages are filtered out below, but they terminate a resize even
+    // when Windows sends no WM_LBUTTONUP to the game window.
+    if (input.message == 8 || input.message == 0x1f || input.message == 0x215 ||
+        (input.message == 0x1c && !input.parameter))
+        for (auto* window = windows; window; window = window->next)
+            window->finish_resize();
     switch (input.message) {
     case 0x203:
         input.message = 0x201;

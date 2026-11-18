@@ -82,22 +82,50 @@ void write_rage_clipboard(std::span<const std::byte> value, RageClipboardApi& ap
     }
     api.close(api.context);
 }
-void read_rage_clipboard(ConfigBytes& destination, RageClipboardApi& api) { // 0x43394985
+namespace {
+void read_clipboard(ConfigBytes& destination, RageClipboardApi& api, bool native_pointer) {
     if (!api.available(api.context, 1) || !api.open(api.context, 0))
         return;
     if (const auto memory = api.get_data(api.context, 1)) {
         if (const auto text = api.wire(api.context, memory)) {
-            // The native routine passes the locked pointer to both APIs.
-            const auto pointer = reinterpret_cast<std::uintptr_t>(text);
-            const auto capacity = api.size(api.context, pointer);
+            const auto handle = native_pointer ? reinterpret_cast<std::uintptr_t>(text) : memory;
+            const auto capacity = api.size(api.context, handle);
             std::size_t length = 0;
             while (length < capacity && text[length])
                 ++length;
             destination = decode_config_export(std::string_view(text, length));
-            api.unlock(api.context, pointer);
+            api.unlock(api.context, handle);
         }
     }
     api.close(api.context);
+}
+}
+void read_rage_clipboard(ConfigBytes& destination, RageClipboardApi& api) { // 0x43394985
+    read_clipboard(destination, api, true);
+}
+void read_config_clipboard(ConfigBytes& destination, RageClipboardApi& api) {
+    read_clipboard(destination, api, false);
+}
+void write_config_clipboard(std::span<const std::byte> value, RageClipboardApi& api,
+                            std::uintptr_t window) {
+    if (value.empty())
+        return;
+    const auto encoded = encode_config_export(value);
+    const auto memory = api.allocate(api.context, GMEM_MOVEABLE, encoded.size() + 1);
+    if (!memory)
+        return;
+    const auto text = api.wire(api.context, memory);
+    if (text) {
+        std::memcpy(const_cast<char*>(text), encoded.c_str(), encoded.size() + 1);
+        api.unlock(api.context, memory);
+        if (api.open(api.context, window)) {
+            const bool transferred = api.empty(api.context) && api.set_data(api.context, CF_TEXT, memory);
+            api.close(api.context);
+            if (transferred)
+                return;
+        }
+    }
+    api.free(api.context, memory);
 }
 RageWeaponSelectorActions
 rage_weapon_clipboard_actions(RageWeaponClipboardContext& context) noexcept {

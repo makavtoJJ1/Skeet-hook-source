@@ -67,12 +67,15 @@ std::u16string config_name_from_utf8(std::string_view name) {
 
 ConfigPresetsManager::ConfigPresetsManager(ConfigRegistries& registries, NamedConfigStore& store,
                                            std::span<const std::byte> baseline,
-                                           ConfigPresetsServices& services)
-    : registries_(registries), store_(store), baseline_(baseline), services_(services) {}
+                                           ConfigPresetsServices& services,
+                                           SettingsStateBinding settings)
+    : registries_(registries), store_(store), baseline_(baseline), services_(services),
+      settings_(settings) {}
 ConfigPresetsManager::ConfigPresetsManager(ConfigRegistries& registries, NamedConfigStore& store,
                                            PreservedConfigStorage& preserved,
                                            ConfigPresetsServices& services)
-    : registries_(registries), store_(store), preserved_(&preserved), services_(services) {}
+    : registries_(registries), store_(store), preserved_(&preserved), services_(services),
+      settings_(preserved) {}
 std::span<const std::byte> ConfigPresetsManager::baseline_bytes() const {
     return preserved_ ? preserved_->baseline() : baseline_;
 }
@@ -197,7 +200,62 @@ bool ConfigPresetsManager::save() {
 void ConfigPresetsManager::erase() {
     store_.erase(
         nul_terminated_name(name.size() < 256 ? std::u16string_view(name) : std::u16string_view{}));
+    if (auto* settings = settings_.get(); settings && settings->startup_preset_hash &&
+        settings->startup_preset_hash == config_preset_hash(name)) {
+        settings->startup_preset_hash = 0;
+        services_.persist_settings();
+    }
     refresh();
+}
+
+bool ConfigPresetsManager::selected_for_startup() const {
+    const auto* settings = settings_.get();
+    return settings && settings->startup_preset_hash && selected_index < entries_.size() &&
+           settings->startup_preset_hash == config_preset_hash(entries_[selected_index].name);
+}
+
+bool ConfigPresetsManager::set_selected_startup(bool enabled) {
+    if (selected_index >= entries_.size())
+        return false;
+    const auto& selected = entries_[selected_index].name;
+    const auto hash = config_preset_hash(selected);
+    if (selected.empty() || selected.size() >= 64 || !hash ||
+        std::count_if(entries_.begin(), entries_.end(), [&](const auto& entry) {
+            return config_preset_hash(entry.name) == hash;
+        }) != 1)
+        return false;
+    auto& saved = settings_.require().startup_preset_hash;
+    if (enabled)
+        saved = hash;
+    else if (saved == hash)
+        saved = 0;
+    services_.persist_settings();
+    return true;
+}
+
+bool ConfigPresetsManager::load_startup() {
+    auto* settings = settings_.get();
+    if (!settings || !settings->startup_preset_hash)
+        return false;
+    const auto hash = settings->startup_preset_hash;
+    refresh();
+    const auto matches = std::count_if(entries_.begin(), entries_.end(), [&](const auto& entry) {
+        return config_preset_hash(entry.name) == hash;
+    });
+    if (matches != 1) {
+        settings->startup_preset_hash = 0;
+        services_.persist_settings();
+        return false;
+    }
+    const auto selected = std::find_if(entries_.begin(), entries_.end(), [&](const auto& entry) {
+        return config_preset_hash(entry.name) == hash;
+    });
+    select(static_cast<std::uint32_t>(selected - entries_.begin()));
+    if (menu_) {
+        menu_->list().set_selection(selected_index);
+        menu_->synchronize_selection();
+    }
+    return load();
 }
 void ConfigPresetsServices::restore_defaults(ConfigLink& registry,
                                              std::span<const std::byte> baseline,

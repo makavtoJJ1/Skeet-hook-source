@@ -4,6 +4,22 @@
 #include <cmath>
 
 namespace skeet::resolver_runtime {
+namespace {
+void apply_variant(lagcomp::LagRecord& record, std::size_t index, std::uint8_t attempt) noexcept {
+    const auto& variant = record.alternatives[index];
+    float pose = (std::bit_cast<float>(variant.state[1]) - -60.0f) / 120.0f + 0.0f;
+    pose = pose > 0.0f ? pose : 0.0f;
+    pose = pose < 1.0f ? pose : 1.0f;
+    record.animation.pose_parameters[11] = pose;
+    record.header.animation_yaw = std::bit_cast<float>(variant.state[0]);
+    copy_hitbox_matrices(variant.matrices, record.matrices);
+    record.header.resolver_mode = attempt;
+}
+}
+
+void select_yaw_variant(lagcomp::LagRecord& record, std::uint8_t attempt) noexcept {
+    apply_variant(record, yaw_variant_index(attempt), attempt);
+}
 
 void select_variant(lagcomp::LagRecord& record, std::uint8_t attempt) noexcept {
     auto& header = record.header;
@@ -11,10 +27,9 @@ void select_variant(lagcomp::LagRecord& record, std::uint8_t attempt) noexcept {
     if ((header.flags & 0x80U) == 0 || mode == 0 || mode > 3)
         return;
     const auto cycle = attempt % 3;
-    std::size_t index;
-    if (mode < 3)
-        index = cycle == 0 ? 1 : cycle == 1 ? 2 : 0;
-    else {
+    if (mode < 3) {
+        select_yaw_variant(record, attempt);
+    } else {
         float delta = std::bit_cast<float>(header.player_history_1ac) -
                       std::bit_cast<float>(header.player_history_180);
         if (std::isnan(delta))
@@ -25,16 +40,9 @@ void select_variant(lagcomp::LagRecord& record, std::uint8_t attempt) noexcept {
             delta = delta < 0.0f ? delta + correction : delta - correction;
         }
         const bool positive = delta > 0.0f;
-        index = cycle == 0 ? (positive ? 0 : 2) : cycle == 1 ? (positive ? 2 : 0) : 1;
+        const auto index = cycle == 0 ? (positive ? 0 : 2) : cycle == 1 ? (positive ? 2 : 0) : 1;
+        apply_variant(record, index, attempt);
     }
-    const auto& variant = record.alternatives[index];
-    float pose = (std::bit_cast<float>(variant.state[1]) - -60.0f) / 120.0f + 0.0f;
-    pose = pose > 0.0f ? pose : 0.0f;
-    pose = pose < 1.0f ? pose : 1.0f;
-    record.animation.pose_parameters[11] = pose;
-    header.animation_yaw = std::bit_cast<float>(variant.state[0]);
-    copy_hitbox_matrices(variant.matrices, record.matrices);
-    header.resolver_mode = attempt;
 }
 
 void advance_pending_attempt(lagcomp::LagRecord& record, std::uint32_t options) noexcept {

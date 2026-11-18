@@ -182,8 +182,7 @@ const lagcomp::EvaluationState* repair_buffered_shot(client::CommandFrame& frame
     recalculate_target_priorities(scratch.candidates, scanner.targeting);
     if (scratch.candidates.count > 1)
         sort_target_candidates(scratch.candidates);
-    const FinalTargetContextBindings final{scanner, owner->final_target.current_bone_counter,
-                                           owner->settings_menu, owner->final_target.jobs};
+    const auto final = owner->final_target.with_scan(scanner);
     auto choice = select_acquired_target_for_shot(scratch.candidates, storage, frame, state, final);
     for (std::uint32_t ordinal = 0; ordinal < state.evaluation_count; ++ordinal)
         synchronize_evaluation_state(storage.candidates[ordinal], storage.evaluations[ordinal]);

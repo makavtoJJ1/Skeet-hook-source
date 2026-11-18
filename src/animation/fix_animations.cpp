@@ -380,11 +380,13 @@ void FixAnimationsRuntime::networkable_history(void* networkable, std::int32_t u
     }
     const auto simulation_offset = b.fields.simulation_time_d5fd2e2c;
     write(player, simulation_offset, read<std::uint32_t>(&owner, 0x10C));
+    const bool received_clock = b.history_rebuild && b.globals.local_player &&
+                                player != b.globals.local_player;
     if (!read<std::uint8_t>(player, b.fields.life_state_9d920e35)) {
         const auto current = read<float>(player, simulation_offset);
         const auto previous = read<float>(player, b.fields.previous_time_1599541f);
-        bool reconcile = current == read<float>(&owner, 0x198);
-        if (!reconcile) {
+        bool reconcile = !received_clock && current == read<float>(&owner, 0x198);
+        if (!received_clock && !reconcile) {
             const auto again = engine::invoke<std::int32_t>(networkable, 10);
             if (lagcomp::time_to_tick(current, b.globals.interval) % 100 == 0) {
                 const auto now = receive_tick(b);
@@ -462,10 +464,12 @@ void FixAnimationsRuntime::networkable_history(void* networkable, std::int32_t u
             const auto stale = tick < subtract(receive_tick(b), 1);
             const auto old = read<std::uint32_t>(&owner, 0);
             write(&owner, 0, (old & ~8u) | (stale ? 8u : 0u));
-            const float minimum =
-                read<float>(player, simulation_offset) - b.globals.interval * 16.0f;
-            write(player, b.fields.previous_time_1599541f,
-                  native_maximum(read<float>(player, b.fields.previous_time_1599541f), minimum));
+            if (!received_clock) {
+                const float minimum =
+                    read<float>(player, simulation_offset) - b.globals.interval * 16.0f;
+                write(player, b.fields.previous_time_1599541f,
+                      native_maximum(read<float>(player, b.fields.previous_time_1599541f), minimum));
+            }
         }
     } else {
         write(&owner, 0x1D4, std::uint32_t(0));

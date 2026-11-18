@@ -60,6 +60,7 @@ SettingsRuntimeOwner::SettingsRuntimeOwner(client::ClientRuntimeStorage& storage
     runtime_.dpi_scale = &settings.settings_menu().dpi_scale;
     runtime_.lock_layout = &settings.settings_menu().lock_layout;
     runtime_.allow_custom_events = &settings.custom_events().enabled.value;
+    runtime_.hidden_cvars.cvar = storage.data().native_cell<void*>(0x4346A87Cu);
 }
 void SettingsRuntimeOwner::capture_default_layout(ui::RootMenu& menu) {
     if (layout_captured_)

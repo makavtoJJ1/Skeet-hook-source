@@ -1,5 +1,6 @@
 #include "skeet/menu/window_render.hpp"
 #include "skeet/menu_window.hpp"
+#include "skeet/popup_menu.hpp"
 #include <bit>
 
 namespace skeet::ui {
@@ -71,10 +72,12 @@ void MenuWindow::update_transition(RenderQueue& queue) { // 0x43384045
             opacity = 1.0f;
         }
     } else if (transition_state == 1) {
+        if (tab_context_menu)
+            tab_context_menu->reset_input();
         const auto elapsed = read_ticks(clock_context) - transition_started;
         auto progress = static_cast<float>(elapsed) / 150.0f;
         if (progress > 1.0f) {
-            input.mouse_flags &= ~std::uint32_t(12);
+            finish_resize();
             transition_state = 0;
             opacity = 1.0f;
             auto flags = input.mouse_flags;
@@ -102,5 +105,9 @@ void MenuWindow::draw(RenderQueue& queue, std::uint32_t accent) { // 0x433AC5E2
     for (auto* tab : std::span(tabs))
         if (tab->visible)
             tab->draw(queue, position, accent);
+    if (tab_context_menu && tab_context_menu->open && tab_context_menu->parent->visible) {
+        const auto& bounds = tab_context_menu->parent->geometry.bounds;
+        tab_context_menu->draw(queue, {add(position.x, bounds.x), add(position.y, bounds.y)}, accent);
+    }
 }
 }

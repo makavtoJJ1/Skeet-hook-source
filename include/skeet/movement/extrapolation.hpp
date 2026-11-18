@@ -31,19 +31,11 @@ struct MovementExtrapolationBindings {
     std::uint8_t* animation_reset; //optional43467B24
     lagcomp::SetAbsoluteVector set_absolute_angles; //optional434688C8
     void* allocator; //actual43467204 interface, Free virtual slot5
-    bool rework = false;
 };
 struct MovementExtrapolationLiveBindings {
     const MovementCaptureInput& capture;
     const MovementEnvironmentBindings& environment;
 };
-// Preview the same inferred input and collision simulation without changing
-// an entity, its animation state, or the record chosen for firing.
-std::optional<MovementSimulation>
-forecast_extrapolation_hull(void* player, const client::PlayerState&, std::int32_t ticks,
-                            const MovementExtrapolationBindings&,
-                            const MovementExtrapolationLiveBindings&);
-
 // Complete43322B09 valid-player path. The unused native ECX argument is
 // omitted. More than32 ticks or a null player animation state returns0.
 // The animation state copy, entity-field overrides, clock restoration and
@@ -54,6 +46,6 @@ std::int32_t extrapolate_lag_record(void* player, client::PlayerState&, lagcomp:
 // their native sites. Frozen semantic snapshots above are not consumed.
 std::int32_t extrapolate_lag_record(void* player, client::PlayerState&, lagcomp::LagRecord&,
                                     std::int32_t ticks, const MovementExtrapolationBindings&,
-                                    const MovementExtrapolationLiveBindings&);
+                                    const MovementExtrapolationLiveBindings&, bool rebuild_pose = false);
 
 } // namespace skeet
