@@ -22,6 +22,14 @@ struct FontExclusiveGuard {
     }
     SRWLOCK* lock;
 };
+void link_font_fallbacks(FontSet& fonts) noexcept {
+    // See startup_font_recipes for the seven font slots.
+    for (auto& font : fonts)
+        font.next = nullptr;
+    fonts[0].next = fonts[1].next = fonts[4].next = &fonts[3];
+    fonts[3].next = fonts[5].next = &fonts[6];
+    fonts[2].next = &fonts[5];
+}
 std::int32_t font_height(std::int32_t height, float scale) {
     const auto value = float(height) * scale + 0.5f;
     if (!(value >= -2147483648.0f && value < 2147483648.0f))
@@ -51,6 +59,7 @@ void RendererContainer::configure_fonts(std::span<const FontDefinition, 7> defin
         default_fonts[i] = std::move(runtime);
         fonts.default_fonts[i].cache = &default_fonts[i]->cache();
     }
+    link_font_fallbacks(fonts.default_fonts);
     fonts_configured_ = true;
 }
 void RendererContainer::set_font_scale(float scale) noexcept {
@@ -63,10 +72,10 @@ void RendererContainer::refresh_fonts() { // 433C95EA..433C96CB
     const auto requested = requested_font_scale();
     if (fonts.scale == requested)
         return;
+    FontExclusiveGuard lock(font_lock_);
     if (requested != 1.0f) {
         if (!fonts_configured_)
             throw std::logic_error("Seven native font definitions are required");
-        FontExclusiveGuard lock(font_lock_);
         for (std::size_t i = 0; i < 7; ++i) {
             const auto& definition = font_definitions[i];
             auto runtime = std::make_unique<FontRuntime>(
@@ -82,6 +91,7 @@ void RendererContainer::refresh_fonts() { // 433C95EA..433C96CB
                     gpu.texture = nullptr;
                 }
         }
+        link_font_fallbacks(fonts.scaled_fonts);
     }
     fonts.scale = requested;
 }

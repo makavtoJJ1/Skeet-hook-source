@@ -7,6 +7,7 @@
 - An option to load a saved configuration on startup.
 - Copy and paste for menu categories.
 - A **Reset** option in the color picker context menu to restore the default color.
+- **Open directory** and **Delete** in the Lua script list context menu. **Delete** moves the clicked script to the Recycle Bin without opening File Explorer.
 - The **Experimental RAGE** checkbox. Enabling **Extrapolated pose rebuild** is highly recommended.
 
 ### Fixed
@@ -14,6 +15,13 @@
 - Menu and FPS issues.
 - Shared ESP decryptor and skin issues.
 - Beam traces for grenades in flight.
+- Lua compatibility for case-insensitive `ui.set` selections and numeric `entity.set_prop` values.
+- Lua stack overflow handling through LuaJIT's internal stack unwinder.
+- Missing symbols and Korean glyphs, concurrent font atlas access, and out-of-bounds glyph writes.
+
+### Performance
+
+- Reduced redundant Windows memory queries during Lua FFI string conversion and access to Lua-owned values.
 
 ## Note
 

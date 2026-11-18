@@ -1,12 +1,155 @@
 #include "skeet/menu/scripts_menu.hpp"
 #include "skeet/menu/config_menu.hpp"
 #include "skeet/config_storage/presets.hpp"
+#include "skeet/popup_menu.hpp"
 #include "skeet/script/manager.hpp"
+#include <shlobj.h>
 #include <algorithm>
 #include <bit>
 #include <utility>
 
 namespace skeet::ui {
+namespace {
+struct ShellApartment {
+    HRESULT result = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+    ~ShellApartment() {
+        if (SUCCEEDED(result))
+            CoUninitialize();
+    }
+};
+struct ReleaseShellInterface {
+    void operator()(IUnknown* object) const noexcept { object->Release(); }
+};
+bool show_script_file(const wchar_t* path) {
+    ShellApartment apartment;
+    if (FAILED(apartment.result))
+        return false;
+    PIDLIST_ABSOLUTE item = nullptr;
+    if (FAILED(SHParseDisplayName(path, nullptr, &item, 0, nullptr)))
+        return false;
+    const auto result = SHOpenFolderAndSelectItems(item, 0, nullptr, 0);
+    CoTaskMemFree(item);
+    return SUCCEEDED(result);
+}
+bool recycle_script_file(const wchar_t* path) {
+    const auto attributes = GetFileAttributesW(path);
+    if (attributes == INVALID_FILE_ATTRIBUTES || (attributes & FILE_ATTRIBUTE_DIRECTORY))
+        return false;
+    ShellApartment apartment;
+    if (FAILED(apartment.result))
+        return false;
+    IFileOperation* operation_pointer = nullptr;
+    if (FAILED(CoCreateInstance(__uuidof(FileOperation), nullptr, CLSCTX_INPROC_SERVER,
+                                IID_PPV_ARGS(&operation_pointer))))
+        return false;
+    const std::unique_ptr<IFileOperation, ReleaseShellInterface> operation(operation_pointer);
+    IShellItem* item_pointer = nullptr;
+    if (FAILED(SHCreateItemFromParsingName(path, nullptr, IID_PPV_ARGS(&item_pointer))))
+        return false;
+    const std::unique_ptr<IShellItem, ReleaseShellInterface> item(item_pointer);
+    constexpr DWORD flags = FOF_ALLOWUNDO | FOF_SILENT | FOF_NOERRORUI |
+                            FOFX_RECYCLEONDELETE | FOFX_EARLYFAILURE;
+    BOOL aborted = FALSE;
+    return SUCCEEDED(operation->SetOperationFlags(flags)) &&
+           SUCCEEDED(operation->DeleteItem(item.get(), nullptr)) &&
+           SUCCEEDED(operation->PerformOperations()) &&
+           SUCCEEDED(operation->GetAnyOperationsAborted(&aborted)) && !aborted &&
+           GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES &&
+           GetLastError() == ERROR_FILE_NOT_FOUND;
+}
+} // namespace
+
+class ScriptsMenu::ScriptList final : public Listbox {
+public:
+    ScriptList(Widget* owner, std::u16string_view label, Point size, std::int32_t* setting,
+               bool show_search, WidgetIdentities& identities, ScriptsMenu& menu)
+        : Listbox(owner, label, size, setting, show_search, identities), menu_(menu),
+          popup_(this, {u"Open directory", u"Delete"}, identities) {
+        popup_.selected = [](Widget& owner, PopupMenu&, std::uint32_t action) {
+            static_cast<ScriptList&>(owner).select_action(action);
+        };
+    }
+    int input_priority() const override { return popup_.open ? 1 : 0; }
+    bool mouse(const InputMessage& message, Point cursor) override {
+        if (popup_.open) {
+            if (popup_.mouse(message, cursor))
+                return true;
+            if (message.message == WM_LBUTTONDOWN || message.message == WM_RBUTTONUP)
+                popup_.reset_input();
+            else if (popup_.hit_test(cursor))
+                return true;
+        }
+        if (message.message != WM_RBUTTONUP || !hit_test(cursor))
+            return Listbox::mouse(message, cursor);
+
+        const auto& bounds = geometry.bounds;
+        const auto x = cursor.x - bounds.x;
+        const auto y = cursor.y - bounds.y - (search_visible ? row_height : 0);
+        if (scroll.enabled && x >= scroll.viewport.x - round_layout_coordinate(scale * 11.0f))
+            return false;
+        const auto row = option_at({x, y});
+        if (row < 0 || static_cast<std::size_t>(row) >= options.size())
+            return false;
+        const auto index = static_cast<std::uint32_t>(options[row].value) & 0x7fffffffu;
+        const auto records = menu_.manager_.records();
+        if (index >= records.size() || records[index].file_path.empty())
+            return false;
+        context_path_ = records[index].file_path;
+        popup_.geometry.bounds.x = x;
+        popup_.geometry.bounds.y = cursor.y - bounds.y;
+        popup_.open = true;
+        return true;
+    }
+    bool keyboard(const InputMessage& message) override {
+        if (popup_.open && message.message == WM_KEYDOWN && message.parameter == VK_ESCAPE) {
+            popup_.reset_input();
+            return true;
+        }
+        return Listbox::keyboard(message);
+    }
+    void reset_input() override {
+        Listbox::reset_input();
+        popup_.reset_input();
+    }
+    void dpi_changed(float factor, const SliderMetrics& metrics) override {
+        Listbox::dpi_changed(factor, metrics);
+        popup_.reset_input();
+        popup_.dpi_changed(factor, metrics);
+    }
+    void draw(RenderQueue& queue, Point origin, std::uint32_t accent) const override {
+        Listbox::draw(queue, origin, accent);
+        const auto& bounds = geometry.bounds;
+        popup_.draw(queue, {origin.x + bounds.x, origin.y + bounds.y}, accent);
+    }
+    void close_popup() { popup_.reset_input(); }
+
+private:
+    void select_action(std::uint32_t action) {
+        const auto file = context_path_;
+        popup_.reset_input();
+        const auto* path = reinterpret_cast<const wchar_t*>(file.c_str());
+        if (action == 0) {
+            if (!show_script_file(path))
+                MessageBoxW(nullptr, L"Could not open the script in File Explorer.", L"Lua", MB_OK);
+        } else if (action == 1) {
+            if (!recycle_script_file(path)) {
+                MessageBoxW(nullptr, L"Could not move the script to the Recycle Bin.", L"Lua", MB_OK);
+                return;
+            }
+            const auto records = menu_.manager_.records();
+            const auto found = std::find_if(records.begin(), records.end(), [&](const auto& record) {
+                return record.file_path == file;
+            });
+            if (found != records.end() && menu_.manager_.loaded(found->name))
+                menu_.manager_.unload(static_cast<std::size_t>(found - records.begin()));
+            menu_.refresh();
+            menu_.update_selection();
+        }
+    }
+    ScriptsMenu& menu_;
+    PopupMenu popup_;
+    std::u16string context_path_;
+};
 
 ScriptsMenu::ScriptsMenu(Tab& tab, WidgetIdentities& identities, ScriptsMenuValues values,
                          script::ScriptManager& manager)
@@ -20,7 +163,8 @@ ScriptsMenu::ScriptsMenu(Tab& tab, WidgetIdentities& identities, ScriptsMenuValu
     unsafe.callbacks.push_back({this, unsafe_changed});
     add<Button>(category_, 0, u"Reload active scripts", Point{158, 28},
                 WidgetCallback{this, reload_active}, identities);
-    list_ = &add<Listbox>(category_, 0, u"Scripts", Point{158, 126}, nullptr, true, identities);
+    list_ = &add<ScriptList>(category_, 0, u"Scripts", Point{158, 126}, nullptr, true, identities,
+                             *this);
     list_->callbacks.push_back({this, selection_changed});
     list_->selection_callbacks.push_back({this, script_selected});
     list_->enabled = true;
@@ -55,6 +199,7 @@ void ScriptsMenu::bind_presets(ConfigPresetsMenu& presets) {
 }
 
 void ScriptsMenu::refresh() { // 0x4336D863
+    static_cast<ScriptList&>(*list_).close_popup();
     auto discovered =
         script::discover_scripts(manager_.builtins_, manager_.files_, manager_.settings_.get());
     startup_->value = nullptr;

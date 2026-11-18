@@ -59,6 +59,7 @@ public:
     void initialize_startup(const char* command_line, std::span<const std::uint32_t, 128> hashes);
 
 private:
+    class ScriptList;
     static void enabled_changed(void*, Widget&);
     static void unsafe_changed(void*, Widget&);
     static void reload_active(void*, Widget&);

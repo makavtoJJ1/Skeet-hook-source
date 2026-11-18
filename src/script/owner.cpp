@@ -258,9 +258,8 @@ void SKEET_SCRIPT_PRIMARY ScriptOwner::level_entry(void* receiver) {
 
 long SKEET_SCRIPT_EXCEPTION
 ScriptOwner::exception_handler(::_EXCEPTION_POINTERS* exception) { //433592DE
-    // The source-linked LuaJIT uses Windows SEH for ordinary Lua errors.
-    // Its protected calls must receive these before the outer native recovery
-    // frame; intercepting them here skips pcall/xpcall and their error values.
+    // LuaJIT's own exception codes belong to the VM's protected frames.
+    // The linked VM unwinds ordinary Lua errors internally.
     if ((exception->ExceptionRecord->ExceptionCode & 0xffffff00u) == 0xe24c4a00u)
         return EXCEPTION_CONTINUE_SEARCH;
     for (auto* frame = detail::RtlGetFrame(); frame; frame = frame->previous) {

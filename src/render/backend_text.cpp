@@ -53,10 +53,10 @@ Point text_extent(FontLink& root, std::u16string_view text) { // 4338AA26
 }
 }
 
-IDirect3DTexture9* RendererBackend::font_texture(FontLink& link) const noexcept {
+const RendererBackend::FontTexture* RendererBackend::font_texture(const FontLink& link) const noexcept {
     const auto at = std::find_if(font_textures_.begin(), font_textures_.end(),
                                  [&](const auto& record) { return record.link == &link; });
-    return at == font_textures_.end() ? nullptr : at->texture;
+    return at == font_textures_.end() || !at->texture ? nullptr : &*at;
 }
 void RendererBackend::upload_fonts() { // 433C96CF..433C973A / 4334A887
     if (!fonts)
@@ -76,13 +76,18 @@ void RendererBackend::upload_fonts() { // 433C96CF..433C973A / 4334A887
                 font_textures_.push_back({&root, nullptr});
                 at = font_textures_.end() - 1;
             }
-            const auto atlas = font->atlas();
+            const auto atlas_read = font->lock_atlas();
+            const auto atlas = atlas_read.view();
             IDirect3DTexture9* uploaded = nullptr;
             if (SUCCEEDED(upload_texture(atlas.width, atlas.height, std::as_bytes(atlas.pixels),
                                          &uploaded))) {
                 if (at->texture)
                     at->texture->Release();
                 at->texture = uploaded;
+                at->width = atlas.width;
+                at->height = atlas.height;
+            } else {
+                font->mark_dirty();
             }
         }
     };
@@ -141,7 +146,8 @@ void RendererBackend::text(std::int32_t x, std::int32_t y, std::uint32_t color, 
                 if (!font)
                     continue;
                 auto* texture = font_texture(*font);
-                if (!texture)
+                if (!texture || glyph.right > float(texture->width) ||
+                    glyph.bottom > float(texture->height))
                     continue;
                 const auto draw_x = add_text(pen_x, glyph.advance_first);
                 const auto next = add_text(draw_x, glyph.advance_second);
@@ -150,8 +156,11 @@ void RendererBackend::text(std::int32_t x, std::int32_t y, std::uint32_t color, 
                 const auto left = float(draw_x), top = float(pen_y);
                 const auto right = (left + glyph.right) - glyph.left;
                 const auto bottom = (top + glyph.bottom) - glyph.top;
-                if (quad(texture, left, top, right, bottom, {argb, argb, argb, argb},
-                         glyph.u0, glyph.v0, glyph.u1, glyph.v1))
+                // The producer may have grown the CPU atlas after upload.
+                const auto width = float(texture->width), height = float(texture->height);
+                if (quad(texture->texture, left, top, right, bottom, {argb, argb, argb, argb},
+                         glyph.left / width, glyph.top / height, glyph.right / width,
+                         glyph.bottom / height))
                     pen_x = next;
             }
         }

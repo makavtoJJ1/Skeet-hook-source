@@ -17,6 +17,20 @@ struct GlyphRecord {
     float left, top, right, bottom;
     std::int32_t first, second;
 };
+struct SharedGlyphLock {
+    explicit SharedGlyphLock(SRWLOCK& lock) noexcept : lock_(lock) {
+        AcquireSRWLockShared(&lock_);
+    }
+    ~SharedGlyphLock() { ReleaseSRWLockShared(&lock_); }
+    SRWLOCK& lock_;
+};
+struct ExclusiveGlyphLock {
+    explicit ExclusiveGlyphLock(SRWLOCK& lock) noexcept : lock_(lock) {
+        AcquireSRWLockExclusive(&lock_);
+    }
+    ~ExclusiveGlyphLock() { ReleaseSRWLockExclusive(&lock_); }
+    SRWLOCK& lock_;
+};
 std::uint32_t luminance_pixel(std::uint32_t bgra) noexcept {
     if (!bgra)
         return 0;
@@ -46,15 +60,16 @@ struct FontRuntime::Impl {
     std::array<std::uint32_t, 2048> coverage{};
     std::unordered_map<char16_t, GlyphRecord> records;
     std::vector<std::uint32_t> pixels;
+    mutable SRWLOCK lock = SRWLOCK_INIT;
     std::atomic_bool dirty = false;
 
     ~Impl() {
+        if (dc)
+            DeleteDC(dc);
         if (bitmap)
             DeleteObject(bitmap);
         if (font)
             DeleteObject(font);
-        if (dc)
-            DeleteDC(dc);
     }
     bool covered(char16_t character) const noexcept {
         const auto c = static_cast<std::uint16_t>(character);
@@ -71,8 +86,9 @@ struct FontRuntime::Impl {
             y += line_height;
         }
         if (y + line_height >= atlas_height) {
-            atlas_height = atlas_height ? atlas_height * 2 : atlas_width;
-            pixels.resize(static_cast<std::size_t>(atlas_width) * atlas_height);
+            const auto height = atlas_height ? atlas_height * 2 : atlas_width;
+            pixels.resize(static_cast<std::size_t>(atlas_width) * height);
+            atlas_height = height;
         }
     }
     void outline(std::int32_t width) {
@@ -121,17 +137,24 @@ struct FontRuntime::Impl {
             if (!length || length == GDI_ERROR || !gm.gmBlackBoxY)
                 return failed(character);
             std::vector<std::uint8_t> gray(length);
-            if (GetGlyphOutlineW(dc, c, GGO_GRAY8_BITMAP, &gm, length, gray.data(), &matrix) ==
-                GDI_ERROR)
+            const auto written = GetGlyphOutlineW(dc, c, GGO_GRAY8_BITMAP, &gm, length,
+                                                  gray.data(), &matrix);
+            if (written == GDI_ERROR || written > length || !gm.gmBlackBoxY ||
+                !gm.gmBlackBoxX || gm.gmBlackBoxX >= static_cast<UINT>(atlas_width))
+                return failed(character);
+            const auto pitch = written / gm.gmBlackBoxY;
+            if (pitch < gm.gmBlackBoxX)
                 return failed(character);
             const auto width = static_cast<std::int32_t>(gm.gmBlackBoxX);
+            const auto rows = static_cast<std::int32_t>(
+                std::min(gm.gmBlackBoxY, static_cast<UINT>(line_height)));
+            const auto offset = std::clamp<std::int32_t>(text_ascent - gm.gmptGlyphOrigin.y,
+                                                         0, line_height - rows);
             reserve_glyph(width);
-            const auto pitch = length / gm.gmBlackBoxY;
-            const auto offset = text_ascent - gm.gmptGlyphOrigin.y;
-            for (UINT row = 0; row < gm.gmBlackBoxY; ++row)
+            for (std::int32_t row = 0; row < rows; ++row)
                 for (UINT column = 0; column < gm.gmBlackBoxX; ++column) {
                     const auto value = gray[static_cast<std::size_t>(row) * pitch + column];
-                    pixels[static_cast<std::size_t>(y + static_cast<std::int32_t>(row) + offset) *
+                    pixels[static_cast<std::size_t>(y + row + offset) *
                                atlas_width +
                            x + column] =
                         value ? 0x00ffffffu | (std::min(std::uint32_t(value) * 4, 255u) << 24) : 0;
@@ -144,6 +167,8 @@ struct FontRuntime::Impl {
             if (!abc.abcA && !abc.abcB && !abc.abcC)
                 return failed(character);
             const std::int32_t border = (flags >> 2) & 1;
+            if (abc.abcB >= static_cast<UINT>(atlas_width - border * 2))
+                return failed(character);
             const auto width = static_cast<std::int32_t>(abc.abcB) + border * 2;
             reserve_glyph(width);
             std::memset(dib, 0, static_cast<std::size_t>(dib_width) * dib_height * 4);
@@ -158,8 +183,9 @@ struct FontRuntime::Impl {
                 GdiFlush();
                 if (!success)
                     return failed(character);
+                const auto end_column = std::min(width - border, dib_width);
                 for (std::int32_t row = border; row < line_height - border; ++row)
-                    for (std::int32_t column = border; column < width - border; ++column)
+                    for (std::int32_t column = border; column < end_column; ++column)
                         pixels[static_cast<std::size_t>(y + row) * atlas_width + x + column] =
                             luminance_pixel(
                                 dib[static_cast<std::size_t>(row) * dib_width + column]);
@@ -260,10 +286,20 @@ bool FontRuntime::valid() const noexcept {
     return impl_->initialized;
 }
 bool FontRuntime::supports(char16_t c) const noexcept {
+    SharedGlyphLock lock(impl_->lock);
     return impl_->covered(c);
 }
 bool FontRuntime::prepare(char16_t c) {
-    return impl_->create_glyph(c);
+    auto& state = *impl_;
+    {
+        SharedGlyphLock lock(state.lock);
+        if (state.records.contains(c))
+            return true;
+        if (!state.covered(c))
+            return false;
+    }
+    ExclusiveGlyphLock lock(state.lock);
+    return state.create_glyph(c);
 }
 void FontRuntime::prepare(std::u16string_view text) {
     for (auto c : text)
@@ -271,6 +307,7 @@ void FontRuntime::prepare(std::u16string_view text) {
 }
 bool FontRuntime::glyph(char16_t c, GlyphImage& out) const noexcept { // 43386484
     const auto& state = *impl_;
+    SharedGlyphLock lock(state.lock);
     const auto found = state.records.find(c);
     if (found == state.records.end())
         return false;
@@ -287,8 +324,17 @@ bool FontRuntime::glyph(char16_t c, GlyphImage& out) const noexcept { // 4338648
            glyph.second};
     return true;
 }
-GlyphAtlas FontRuntime::atlas() const noexcept {
-    return {impl_->atlas_width, impl_->atlas_height, impl_->pixels};
+FontRuntime::AtlasRead::AtlasRead(const Impl& state) noexcept : state_(state) {
+    AcquireSRWLockShared(&state_.lock);
+}
+FontRuntime::AtlasRead::~AtlasRead() {
+    ReleaseSRWLockShared(&state_.lock);
+}
+GlyphAtlas FontRuntime::AtlasRead::view() const noexcept {
+    return {state_.atlas_width, state_.atlas_height, state_.pixels};
+}
+FontRuntime::AtlasRead FontRuntime::lock_atlas() const noexcept {
+    return AtlasRead(*impl_);
 }
 void FontRuntime::mark_dirty() noexcept {
     impl_->dirty.store(true, std::memory_order_seq_cst);

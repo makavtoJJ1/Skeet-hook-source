@@ -391,10 +391,11 @@ copyval:  /* Copy value. */
 
 /* Convert C type to TValue. Caveat: expects to get the raw CType! */
 int lj_cconv_tv_ct(CTState *cts, CType *s, CTypeID sid,
-		   TValue *o, uint8_t *sp)
+		   TValue *o, uint8_t *sp, CTInfo flags)
 {
   CTInfo sinfo = s->info;
-  if (!(ctype_isrefarray(sinfo) || ctype_isstruct(sinfo)) &&
+  if (!(flags & CCF_SAFEREAD) &&
+      !(ctype_isrefarray(sinfo) || ctype_isstruct(sinfo)) &&
       !cdata_checkptr(cts->L, sp, s->size, SKEET_FFI_READ)) {
     if (ctype_isnum(sinfo) && s->size <= 8 &&
         (!ctype_isinteger(sinfo) || s->size <= 4)) {
