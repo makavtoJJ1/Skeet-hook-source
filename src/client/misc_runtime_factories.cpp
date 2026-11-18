@@ -129,6 +129,7 @@ void require_bindings(NativeStartupSources& sources, const Bindings& b) {
         throw std::invalid_argument(
             "Misc factories must share the live command flags and input words");
     const auto& g = b.grenades.engine;
+    const auto& grenade_visuals = b.grenades.visuals;
     if (&g.active != &image.native_cell<void*>(0x43475AACu) ||
         &g.input != &image.native_cell<void*>(0x4346A894u) ||
         &g.live.engine_client != &image.native_cell<void*>(0x4346A514u) ||
@@ -139,8 +140,8 @@ void require_bindings(NativeStartupSources& sources, const Bindings& b) {
         &g.release_choke_enabled != &image.native_cell<std::uint8_t>(0x43467560u) ||
         &g.observer_suppressed != &image.native_cell<std::uint8_t>(0x434684E0u) ||
         &g.ribbons_suppressed != &image.native_cell<std::uint8_t>(0x43468E58u) ||
-        &g.ribbons_color != &image.native_cell<std::uint32_t>(0x43468F60u) ||
-        &g.live.grenade_entities_enabled != &image.native_cell<std::uint8_t>(0x43467CD4u) ||
+        &g.ribbons_color != &grenade_visuals.entity_color.value ||
+        &g.live.grenade_entities_enabled != &grenade_visuals.entities.value ||
         &g.live.queries.grenades().bindings().entity_list != &image.native_cell<void*>(0x4346A890u))
         throw std::invalid_argument(
             "Misc grenade factory requires its canonical owner and live engine cells");
