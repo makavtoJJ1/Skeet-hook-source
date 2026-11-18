@@ -247,6 +247,10 @@ extern void __DestructExceptionObject(EXCEPTION_RECORD *rec, int nothrow);
 #define LJ_EXCODE_CHECK(cl)	(((cl) ^ LJ_EXCODE) <= 0xff)
 #define LJ_EXCODE_ERRCODE(cl)	((int)((cl) & 0xff))
 
+#if LJ_TARGET_X86
+extern int skeet_lua_can_unwind_native_fault(unsigned code, unsigned flags);
+#endif
+
 /* Windows exception handler for interpreter frame. */
 LJ_FUNCA int lj_err_unwind_win(EXCEPTION_RECORD *rec,
   void *f, CONTEXT *ctx, UndocumentedDispatcherContext *dispatch)
@@ -287,6 +291,11 @@ LJ_FUNCA int lj_err_unwind_win(EXCEPTION_RECORD *rec,
 	__DestructExceptionObject(rec, 1);
 #endif
 	setstrV(L, L->top++, lj_err_str(L, LJ_ERR_ERRCPP));
+#if LJ_TARGET_X86
+      } else if (skeet_lua_can_unwind_native_fault(rec->ExceptionCode, rec->ExceptionFlags)) {
+	if (cframe_raw(cf2) != cf) return 1;
+	setstrV(L, L->top++, lj_str_newlit(L, "native access violation in Lua callback"));
+#endif
       } else if (!LJ_EXCODE_CHECK(rec->ExceptionCode)) {
 	/* Don't catch access violations etc. */
 	return 1;  /* ExceptionContinueSearch */
@@ -332,6 +341,19 @@ LJ_FUNCA int lj_err_unwind_win(EXCEPTION_RECORD *rec,
   }
   return 1;  /* ExceptionContinueSearch */
 }
+
+#if LJ_TARGET_X86
+uintptr_t skeet_lua_seh_handler_address(void)
+{
+  return (uintptr_t)lj_err_unwind_win;
+}
+
+int skeet_lua_can_unwind_seh_frame(const void *registration)
+{
+  void *cf = (char *)registration - CFRAME_OFS_SEH;
+  return cframe_raw(err_unwind(cframe_L(cf), cf, 0)) == cf;
+}
+#endif
 
 #if LJ_UNWIND_JIT
 

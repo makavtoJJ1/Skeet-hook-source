@@ -17,6 +17,7 @@
 - Beam traces for grenades in flight.
 - Lua compatibility for case-insensitive `ui.set` selections and numeric `entity.set_prop` values.
 - Lua stack overflow handling through LuaJIT's internal stack unwinder.
+- Native access violations in protected Lua callbacks unwind the active Lua frames before returning to the host.
 - Missing symbols and Korean glyphs, concurrent font atlas access, and out-of-bounds glyph writes.
 
 ### Performance
