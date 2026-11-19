@@ -132,23 +132,25 @@ static void *err_unwind(lua_State *L, void *stopcf, int errcode)
       break;
     case FRAME_C:  /* C frame. */
     unwind_c:
-#if LJ_UNWIND_EXT
-      if (errcode) {
-	L->base = frame_prevd(frame) + 1;
-	L->cframe = cframe_prev(cf);
-	unwindstack(L, frame - LJ_FR2);
-      } else if (cf != stopcf) {
-	cf = cframe_prev(cf);
-	frame = frame_prevd(frame);
-	break;
+#if LJ_UNWIND_EXT || (LJ_ABI_WIN && LJ_TARGET_X86)
+      /* Windows visits each native frame separately during an SEH unwind,
+      ** even when ordinary Lua errors use the internal unwinder (stopcf == NULL).
+      */
+      if (LJ_UNWIND_EXT || stopcf != NULL) {
+	if (errcode) {
+	  L->base = frame_prevd(frame) + 1;
+	  L->cframe = cframe_prev(cf);
+	  unwindstack(L, frame - LJ_FR2);
+	  return NULL;
+	}
+	if (cf == stopcf) return NULL;
       }
-      return NULL;  /* Continue unwinding. */
 #else
       UNUSED(stopcf);
+#endif
       cf = cframe_prev(cf);
       frame = frame_prevd(frame);
       break;
-#endif
     case FRAME_CP:  /* Protected C frame. */
       if (cframe_canyield(cf)) {  /* Resume? */
 	if (errcode) {
@@ -216,6 +218,9 @@ static void *err_unwind(lua_State *L, void *stopcf, int errcode)
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#if LJ_TARGET_X86
+#include <stdio.h>
+#endif
 
 #if LJ_TARGET_X86
 typedef void *UndocumentedDispatcherContext;  /* Unused on x86. */
@@ -249,6 +254,28 @@ extern void __DestructExceptionObject(EXCEPTION_RECORD *rec, int nothrow);
 
 #if LJ_TARGET_X86
 extern int skeet_lua_can_unwind_native_fault(unsigned code, unsigned flags);
+extern IMAGE_DOS_HEADER __ImageBase;
+
+static GCstr *native_fault_message(lua_State *L, const EXCEPTION_RECORD *rec)
+{
+  char message[160];
+  size_t used;
+  MEMORY_BASIC_INFORMATION region;
+  uintptr_t pc = (uintptr_t)rec->ExceptionAddress;
+  used = (size_t)snprintf(message, sizeof(message),
+			  "native access violation in Lua callback at 0x%08X", (unsigned)pc);
+  if (VirtualQuery(rec->ExceptionAddress, &region, sizeof(region)) &&
+      region.AllocationBase == (void *)&__ImageBase)
+    used += (size_t)snprintf(message+used, sizeof(message)-used, " (runtime+0x%X)",
+			     (unsigned)(pc - (uintptr_t)region.AllocationBase));
+  if (rec->NumberParameters >= 2) {
+    ULONG_PTR kind = rec->ExceptionInformation[0];
+    const char *op = kind == 0 ? "read" : kind == 1 ? "write" : kind == 8 ? "execute" : "access";
+    snprintf(message+used, sizeof(message)-used, ", %s at 0x%08X", op,
+	     (unsigned)rec->ExceptionInformation[1]);
+  }
+  return lj_str_newz(L, message);
+}
 #endif
 
 /* Windows exception handler for interpreter frame. */
@@ -294,7 +321,7 @@ LJ_FUNCA int lj_err_unwind_win(EXCEPTION_RECORD *rec,
 #if LJ_TARGET_X86
       } else if (skeet_lua_can_unwind_native_fault(rec->ExceptionCode, rec->ExceptionFlags)) {
 	if (cframe_raw(cf2) != cf) return 1;
-	setstrV(L, L->top++, lj_str_newlit(L, "native access violation in Lua callback"));
+	setstrV(L, L->top++, native_fault_message(L, rec));
 #endif
       } else if (!LJ_EXCODE_CHECK(rec->ExceptionCode)) {
 	/* Don't catch access violations etc. */
