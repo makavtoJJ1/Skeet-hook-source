@@ -171,11 +171,20 @@ local function register_render_aliases()
     end
 end
 local function vtable_function(instance,index,ctype)
-    return cast(ctype,cast(vtable_type,instance)[0][index])
+    if instance==nil then error('invalid instance',3) end
+    index=tonumber(index)
+    if not index or index<0 or index~=floor(index) or index>0x3fffffff then
+        error('invalid vtable index',3)
+    end
+    local methods=cast(vtable_type,instance)[0]
+    if methods==nil then error('invalid vtable',3) end
+    local method=methods[index]
+    if method==nil then error('invalid vtable method',3) end
+    return cast(ctype,method)
 end
 local function vtable_bind(module,interface,index,ctype,...)
     local instance=create_interface(module,interface) or error('invalid interface',2)
-    local callback=vtable_function(instance,index,typeof(ctype,...)) or error('invalid vtable',2)
+    local callback=vtable_function(instance,index,typeof(ctype,...))
     return function(...)return callback(instance,...)end
 end
 local function vtable_thunk(index,ctype,...)

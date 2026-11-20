@@ -301,7 +301,6 @@ struct ScriptApiRuntimeOwner::Data {
         client.hud_log =
             ClientHudLogSource::canonical(data.native_cell<misc::ColoredLogRing*>(0x434758CCu));
         client.ballistics = &scene.queries().ballistics();
-        client.bullet_filter_vtable = data.native_cell<void**>(0x43475B90u);
         client.hitboxes = &hitbox;
         entity.engine = client.engine;
         entity.entity_list = client.entity_list;

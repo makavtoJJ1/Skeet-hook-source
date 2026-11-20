@@ -14,6 +14,9 @@
 #include <string>
 #include <variant>
 
+namespace skeet {
+class EngineBallistics;
+}
 namespace skeet::misc {
 class NormalLog;
 class ErrorLog;
@@ -136,8 +139,7 @@ struct ClientBindings {
     misc::ErrorLog* error_log = nullptr;
     ClientHudLogSource hud_log{}; //live434758CC, constructed after ScriptOwner
     ui::PlayersMenu* players_menu = nullptr;
-    BallisticEngine* ballistics = nullptr;
-    void** bullet_filter_vtable = nullptr; //actual engine vtable43475B90
+    EngineBallistics* ballistics = nullptr;
     client::ClientHitboxRuntime* hitboxes = nullptr;
 };
 

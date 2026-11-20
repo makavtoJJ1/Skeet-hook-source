@@ -58,6 +58,7 @@ struct HistoryResolverUpdateBindings {
 struct HistoryResolverUpdateResult {
     float animation_publish_layer_weight; // native stack13AC, not an address
     float speed_fraction; // native stack1294, updated after each animation step
+    bool animation_rebuilt = false;
 };
 // Complete43411A37..43414F3C. Resolver policy, inline feedback and animation
 // stepping execute here; only genuine engine/CRT operations are bound. The

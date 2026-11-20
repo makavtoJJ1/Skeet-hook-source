@@ -1,4 +1,5 @@
 #include "skeet/client/command_eye_adjustment.hpp"
+#include "skeet/engine/studio_hitbox_set.hpp"
 #include "skeet/rage/firing.hpp"
 #include "skeet/animation/bone_runtime.hpp"
 #include "skeet/engine/build_eye_adjustment_bindings.hpp"
@@ -79,10 +80,8 @@ bool correct_head_height(CommandFrame& frame, void* player, const Context& conte
     if (!header)
         return false;
     const auto set_index = read<std::int32_t>(player, offsets.hitbox_set);
-    const auto set_offset = read<std::int32_t>(header, 0xB0);
-    const auto relative = std::uint32_t(set_index) * 12U + std::uint32_t(set_offset);
-    const auto* set = header + std::bit_cast<std::int32_t>(relative);
-    if (!set || !read<std::int32_t>(set, 4))
+    const auto* set = engine::studio_hitbox_set(header, set_index);
+    if (!set || read<std::int32_t>(set, 4) <= 0)
         return false;
     const auto* boxes = set + read<std::int32_t>(set, 8);
     if (!boxes)
@@ -93,6 +92,8 @@ bool correct_head_height(CommandFrame& frame, void* player, const Context& conte
     const auto& common = offsets.common;
     if (bone < read<std::int32_t>(player, common.bone_cache + 0xC)) {
         const auto* matrices = read<const Matrix3x4*>(player, common.bone_cache);
+        if (!matrices)
+            return false;
         frame.origin_dc[2] = rage::correct_firing_eye_height(matrices[bone], frame.origin_dc[2]);
     }
     return true;

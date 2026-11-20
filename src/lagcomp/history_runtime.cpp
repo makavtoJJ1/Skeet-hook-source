@@ -92,6 +92,7 @@ void publish_live_fallback(client::PlayerState& owner, bool captured,
         const auto truncated = _mm_cvtt_ss2si(_mm_set_ss(seconds));
         if (float(truncated) > float(newest.header.simulation_tick) * entity.interval) {
             std::memcpy(&newest, &owner.fallback, sizeof(LagRecord));
+            owner.rebuilt_animation_by_slot[owner.history.first & 31u] = owner.fallback_animation_rebuilt;
             owner.jitter.remember(owner.jitter.fallback);
             owner.fallback.header.receive_tick = -1;
             return;
@@ -158,19 +159,32 @@ void HistoryRecordingRuntime::build_record(client::PlayerState& owner, void* pla
         write(player, b.bones.fields.ik_mask_01d0bacc, UINT32_MAX);
     } else
         engine::invoke<const Vector*>(player, 11);
-    if (b.configuration.reworked())
+    const bool rebuild = b.configuration.reworked();
+    if (rebuild)
         record.header.flags &= ~(4u | 0x80u);
     std::int32_t count;
-    if (b.configuration.reworked()) {
+    if (rebuild) {
         std::array<Matrix3x4, animation::maximum_bones> scratch;
         count = animation::build_captured_hitbox_matrices(player, record, b.bones, scratch,
                                                          record.matrices, 0x80300u);
     } else
         count = b.bones.build_resolver_hitbox_matrices(player, record.header.animation_yaw,
                                                        record.matrices);
-    if (count > 0 && (!b.configuration.reworked() ||
-                      resolver_runtime::complete_hitbox_matrices(count, record.matrices)))
+    const bool complete = count > 0 && (!rebuild ||
+                          resolver_runtime::complete_hitbox_matrices(count, record.matrices));
+    if (complete)
         record.header.flags |= 4u;
+    if (&record == &owner.fallback) {
+        owner.fallback_animation_rebuilt.matrices = rebuild && complete;
+    } else {
+        for (std::uint32_t age = 0; age < owner.history.count; ++age) {
+            const auto slot = (owner.history.first + age) & 31u;
+            if (owner.history.records[slot] == &record) {
+                owner.rebuilt_animation_by_slot[slot].matrices = rebuild && complete;
+                break;
+            }
+        }
+    }
     if (hypotheses_enabled(player))
         build_live_hypotheses(player, owner, fraction, record);
     if (deferred) {
@@ -181,7 +195,7 @@ void HistoryRecordingRuntime::build_record(client::PlayerState& owner, void* pla
 void HistoryRecordingRuntime::publish_record(client::PlayerState& owner, void* player,
                                              const CachedHistoryFrame& frame, bool active,
                                              bool enemy, bool forced_yaw, bool changed, std::uint32_t flags,
-                                             float fraction, HistoryJobQueue& queue) {
+                                             float fraction, bool animation_rebuilt, HistoryJobQueue& queue) {
     const auto& b = bindings_;
     auto state = owner.recording_state();
     const auto slot =
@@ -194,6 +208,10 @@ void HistoryRecordingRuntime::publish_record(client::PlayerState& owner, void* p
     if (record) {
         LastLayerRestore layer(player, b.entity.offsets);
         b.entity.capture_record(*record, player, b.players);
+        if (fallback)
+            owner.fallback_animation_rebuilt = {false, animation_rebuilt};
+        else
+            owner.rebuilt_animation_by_slot[owner.history.first & 31u] = {false, animation_rebuilt};
         if (fallback)
             owner.jitter.fallback = {};
         if (b.configuration.jitter_fix || forced_yaw) {
@@ -392,6 +410,7 @@ void HistoryRecordingRuntime::record_players(void* local, HistoryRecordingScratc
             continue;
         }
         float fraction = frame.animation_speed_fraction;
+        bool animation_rebuilt = false;
         if (animation_enabled != cached_enabled && changed) {
             const auto saved_origin = *engine::invoke<const Vector*>(player, 10);
             set_absolute_origin(player, read<Vector>(player, entity.offsets.origin), entity);
@@ -481,6 +500,7 @@ void HistoryRecordingRuntime::record_players(void* local, HistoryRecordingScratc
                         {old_index, max_yaw, fraction, table_offset}, scratch.resolver, resolver);
                     layer_weight = result.animation_publish_layer_weight;
                     fraction = result.speed_fraction;
+                    animation_rebuilt = result.animation_rebuilt;
                 }
                 publish_history_animation(owner, player, frame.animation_state, frame.ticks.last,
                                           frame.ticks.count, fraction, layer_weight, flags, saved,
@@ -488,7 +508,7 @@ void HistoryRecordingRuntime::record_players(void* local, HistoryRecordingScratc
             }
         }
         publish_record(owner, player, frame, active, enemy, player_table[table_offset + 5] != 0,
-                       changed, flags, fraction, queue);
+                       changed, flags, fraction, animation_rebuilt, queue);
         publish_history_final_angles(player, previous_angles, entity,
                                      b.fields.angle_interpolation_fac21eaf);
     }

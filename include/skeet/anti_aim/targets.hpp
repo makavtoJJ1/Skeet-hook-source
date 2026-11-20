@@ -1,4 +1,5 @@
 #pragma once
+#include "skeet/rage/bullet_filter_methods.hpp"
 #include "skeet/rage_geometry.hpp"
 #include "skeet/rage/targeting.hpp"
 #include "skeet/rage/ballistics.hpp"
@@ -145,7 +146,7 @@ struct TargetTraceFilter {
     float minimum_damage;
     void* const* engine_vtable;
     const TargetTraceEntities* entities;
-    std::array<void*, 5> methods;
+    BulletFilterMethods methods;
     TargetTraceFilter(void* const* engine_vtable, const TargetTraceEntities&,
                       std::uint32_t mask = 0x600400b, std::uint32_t exit_mask = 0x600400b,
                       float minimum_damage = 1.0f);

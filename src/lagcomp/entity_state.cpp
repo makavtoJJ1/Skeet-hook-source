@@ -1,4 +1,5 @@
 #include "skeet/lagcomp/entity_state.hpp"
+#include "skeet/engine/studio_hitbox_set.hpp"
 #include "skeet/engine/opaque_native_word.hpp"
 #include "skeet/lagcomp/receive_timing.hpp"
 #include "skeet/client/player_state.hpp"
@@ -43,7 +44,7 @@ void set_transform(void* player, const EntityNetvars& offsets, SetAbsoluteVector
 }
 void scatter_live_hitbox_matrices(const HitboxMatrices& matrices, void* player,
                                   const EntityHitboxModelOffsets& offsets,
-                                  Matrix3x4* bones) noexcept {
+                                  std::span<Matrix3x4> bones) noexcept {
     const auto wrapper = read<const void*>(player, std::uint32_t(offsets.studio_header));
     if (!wrapper)
         return;
@@ -51,13 +52,16 @@ void scatter_live_hitbox_matrices(const HitboxMatrices& matrices, void* player,
     if (!header)
         return;
     const auto index = read<std::int32_t>(player, std::uint32_t(offsets.hitbox_set));
-    const auto set = static_cast<const std::byte*>(header) + read<std::int32_t>(header, 0xB0) +
-                     std::ptrdiff_t(index) * 12;
+    const auto set = engine::studio_hitbox_set(static_cast<const std::byte*>(header), index);
+    if (!set)
+        return;
     const auto native_count = read<std::int32_t>(set, 4);
     const auto count = native_count < 19 ? native_count : 19;
     for (std::int32_t i = 0; i < count; ++i) {
         const auto descriptor = set + read<std::int32_t>(set, 8) + std::ptrdiff_t(i) * 0x44;
-        bones[read<std::int32_t>(descriptor, 0)] = matrices[std::size_t(i)];
+        const auto bone = read<std::uint32_t>(descriptor, 0);
+        if (bone < bones.size())
+            bones[bone] = matrices[std::size_t(i)];
     }
 }
 }
@@ -82,9 +86,10 @@ float animation_speed_factor(const void* state) noexcept {
 }
 void scatter_record_hitbox_matrices(const HitboxMatrices& matrices,
                                     std::span<const std::uint32_t> hitbox_bones,
-                                    Matrix3x4* bones) noexcept {
+                                    std::span<Matrix3x4> bones) noexcept {
     for (std::size_t i = 0; i < hitbox_bones.size() && i < 19; ++i)
-        bones[hitbox_bones[i]] = matrices[i];
+        if (hitbox_bones[i] < bones.size())
+            bones[hitbox_bones[i]] = matrices[i];
 }
 namespace {
 struct CaptureHistoryView {
@@ -265,7 +270,9 @@ void EntityStateRuntime::apply_record_inputs(void* player, const LagRecord& reco
     write(player, offsets.origin, saved.origin);
     restore_player_animation(record.animation, player, offsets);
     auto* cache = static_cast<std::byte*>(player) + offsets.bone_cache;
-    if (!(saved.flags & 4u) || !read<std::int32_t>(cache, 0xC)) {
+    const auto bone_count = read<std::int32_t>(cache, 0xC);
+    auto* cache_data = read<Matrix3x4*>(cache, 0);
+    if (!(saved.flags & 4u) || !cache_data || bone_count <= 0) {
         write(player, offsets.bone_accessor + 8, std::uint32_t(0));
         write(player, offsets.recent_bone_counter, std::uint32_t(0));
         write(player, offsets.last_bone_setup_time, std::uint32_t(0xFF7FFFFF));
@@ -273,7 +280,7 @@ void EntityStateRuntime::apply_record_inputs(void* player, const LagRecord& reco
         write(player, offsets.effects_bb78dc43,
               read<std::uint32_t>(player, offsets.effects_bb78dc43) & 0xFFFFFFFDu);
     } else {
-        auto* bones = read<Matrix3x4*>(cache, 0);
+        std::span<Matrix3x4> bones{cache_data, static_cast<std::size_t>(bone_count)};
         if (model)
             scatter_live_hitbox_matrices(record.matrices, player, *model, bones);
         else

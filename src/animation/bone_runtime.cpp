@@ -1,4 +1,5 @@
 #include "skeet/animation/bone_runtime.hpp"
+#include "skeet/engine/studio_hitbox_set.hpp"
 #include "skeet/engine/opaque_native_word.hpp"
 #include <algorithm>
 #include <bit>
@@ -24,9 +25,7 @@ const void* studio_wrapper(const void* player, std::ptrdiff_t offset) noexcept {
 const std::byte* hitbox_set(const void* player, const void* wrapper,
                             std::ptrdiff_t offset) noexcept {
     const auto* header = read<const std::byte*>(wrapper, 0);
-    const auto relative = std::uint32_t(read<std::int32_t>(player, offset)) * 12u +
-                          std::uint32_t(read<std::int32_t>(header, 0xB0));
-    return header + std::bit_cast<std::int32_t>(relative);
+    return engine::studio_hitbox_set(header, read<std::int32_t>(player, offset));
 }
 BoneModel hierarchy_model(const void* wrapper) noexcept {
     const auto* header = read<const void*>(wrapper, 0);
@@ -245,38 +244,39 @@ std::int32_t BoneRuntime::select_hitbox_bone_matrices(const void* player,
     const auto* set = hitbox_set(player, wrapper, fields.hitbox_set_c2b6fb10);
     if (!set)
         return 0;
-    const auto count = std::min(19, read<std::int32_t>(set, 4));
+    const auto count = std::min(read<std::int32_t>(set, 4),
+        static_cast<int>(std::min<std::size_t>(19, hitboxes.size())));
     if (count <= 0)
-        return count;
+        return 0;
+    std::array<std::uint32_t, 19> mapping;
+    const auto relative = read<std::int32_t>(set, 8);
     for (std::int32_t i = 0; i < count; ++i) {
-        const auto relative = read<std::int32_t>(set, 8);
-        const auto bone =
-            read<std::uint32_t>(set, std::ptrdiff_t(relative) + std::ptrdiff_t(i) * 0x44);
-        std::memcpy(&hitboxes[std::size_t(i)], &bones[bone], sizeof(Matrix3x4));
+        mapping[i] = read<std::uint32_t>(set, std::ptrdiff_t(relative) + std::ptrdiff_t(i) * 0x44);
+        if (mapping[i] >= bones.size())
+            return 0;
     }
+    for (int i = 0; i < count; ++i)
+        hitboxes[i] = bones[mapping[i]];
     return count;
 }
 
 void BoneRuntime::scatter_hitbox_bone_matrices(const void* player,
                                                std::span<const Matrix3x4> hitboxes,
                                                std::span<Matrix3x4> bones) const {
-    scatter_hitbox_bone_matrices(player, hitboxes, bones.data());
-}
-void BoneRuntime::scatter_hitbox_bone_matrices(const void* player,
-                                               std::span<const Matrix3x4> hitboxes,
-                                               Matrix3x4* bones) const {
     const auto* wrapper = studio_wrapper(player, fields.studio_wrapper_32e4daf1);
     if (!wrapper)
         return;
     const auto* set = hitbox_set(player, wrapper, fields.hitbox_set_c2b6fb10);
     if (!set)
         return;
-    const auto count = std::min(19, read<std::int32_t>(set, 4));
+    const auto count = std::min(read<std::int32_t>(set, 4),
+        static_cast<int>(std::min<std::size_t>(19, hitboxes.size())));
     for (std::int32_t i = 0; i < count; ++i) {
         const auto relative = read<std::int32_t>(set, 8);
         const auto bone =
             read<std::uint32_t>(set, std::ptrdiff_t(relative) + std::ptrdiff_t(i) * 0x44);
-        std::memcpy(&bones[bone], &hitboxes[std::size_t(i)], sizeof(Matrix3x4));
+        if (bone < bones.size())
+            bones[bone] = hitboxes[std::size_t(i)];
     }
 }
 

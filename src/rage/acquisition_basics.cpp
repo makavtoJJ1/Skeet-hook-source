@@ -13,6 +13,10 @@ template <class T> T read(const void* object, std::size_t offset) noexcept {
     return value;
 }
 }
+std::uint32_t AcquisitionTargetSettings::record_limit() const noexcept {
+    constexpr std::array<std::uint32_t, 5> limits{1, 1, 3, 2, 5}; //43474950
+    return limits[words[0]];
+}
 std::uint8_t AcquisitionTargetSettings::option(std::size_t native_offset) const noexcept {
     return std::uint8_t(words[(native_offset - 0xBCU) >> 2] >> ((native_offset & 3U) * 8U));
 }

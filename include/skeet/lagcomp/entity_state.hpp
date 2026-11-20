@@ -71,7 +71,7 @@ using SetCollisionBounds = engine::MemberFunction<void, const Vector&, const Vec
 // address the caller's cache; source matrices and cache storage are distinct.
 void scatter_record_hitbox_matrices(const HitboxMatrices&,
                                     std::span<const std::uint32_t> hitbox_bones,
-                                    Matrix3x4* bone_cache) noexcept;
+                                    std::span<Matrix3x4> bone_cache) noexcept;
 struct EntityStateRuntime {
     EntityNetvars offsets;
     void* engine;

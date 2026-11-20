@@ -208,10 +208,7 @@ TargetTraceFilter::TargetTraceFilter(void* const* base, const TargetTraceEntitie
                                      std::uint32_t entry_mask, std::uint32_t leave_mask,
                                      float minimum)
     : vtable(nullptr), mask(entry_mask), exit_mask(leave_mask), minimum_damage(minimum),
-      engine_vtable(base), entities(&e) {
-    if (!base)
-        throw std::logic_error("Required engine trace filter vtable is not bound");
-    methods = {reinterpret_cast<void*>(should_hit), base[1], base[2], base[3], base[4]};
+      engine_vtable(base), entities(&e), methods(base, reinterpret_cast<void*>(should_hit)) {
     vtable = methods.data();
 }
 BallisticFilter TargetTraceFilter::binding() noexcept {

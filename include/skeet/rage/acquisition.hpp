@@ -1,4 +1,5 @@
 #pragma once
+#include "skeet/lagcomp/rebuild_usage.hpp"
 #include "scanning.hpp"
 #include "skeet/client/command_frame.hpp"
 #include "skeet/client/player_state.hpp"
@@ -25,11 +26,13 @@ class FeedbackOwner;
 // Unnamed option bytes are preserved until their actual consumers read them.
 struct AcquisitionTargetSettings {
     std::array<std::uint32_t, 10> words{};
+    std::uint32_t record_limit() const noexcept;
     std::uint8_t option(std::size_t native_offset) const noexcept;
     void option(std::size_t native_offset, std::uint8_t value) noexcept;
     ScanPolicy scan_policy() const noexcept;
     void scan_policy(const ScanPolicy&) noexcept;
 };
+enum class PoseForecastStatus : std::uint8_t { no_request, rejected, submitted };
 struct AcquisitionEvaluation {
     // One physical native0x1190-byte owner. Its unwritten prefix/EC padding
     // remains incoming storage; record is an alias of native.record.
@@ -44,6 +47,8 @@ struct AcquisitionEvaluation {
     std::uint32_t body_disabler_reasons = 0; // native candidate+B8
     std::uint32_t ballistic_evaluations = 0; // native candidate+E8
     bool extrapolated = false;
+    lagcomp::RebuildUsage rebuild_usage{};
+    PoseForecastStatus forecast_status = PoseForecastStatus::no_request;
     std::int32_t extrapolation_ticks = 0;
     std::uint32_t target_handle = UINT32_MAX;
 };

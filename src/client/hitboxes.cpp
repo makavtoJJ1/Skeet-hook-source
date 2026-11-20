@@ -1,4 +1,5 @@
 #include "skeet/client/hitboxes.hpp"
+#include "skeet/engine/studio_hitbox_set.hpp"
 #include "skeet/lagcomp/entity_state.hpp"
 #include <algorithm>
 #include <bit>
@@ -31,13 +32,19 @@ bool model_for(const void* entity, const ClientHitboxOffsets& offsets, Model& mo
     const auto studio = read<const std::byte*>(wrapper, 0);
     if (!studio)
         return false;
-    const auto* set = studio + read<std::int32_t>(studio, 0xB0) +
-                      read<std::int32_t>(entity, offsets.hitbox_set) * 12;
-    model.count = read<std::int32_t>(set, 4);
+    const auto* set = engine::studio_hitbox_set(studio, read<std::int32_t>(entity, offsets.hitbox_set));
+    if (!set)
+        return false;
+    model.count = std::min(read<std::int32_t>(set, 4), static_cast<int>(model.bones.size()));
+    if (model.count <= 0)
+        return false;
     const auto* descriptors = set + read<std::int32_t>(set, 8);
     model.descriptors = {descriptors, static_cast<std::size_t>(model.count) * 0x44};
-    for (std::int32_t i = 0; i < model.count; ++i)
+    for (std::int32_t i = 0; i < model.count; ++i) {
         model.bones[i] = read<std::uint32_t>(descriptors, i * 0x44);
+        if (model.bones[i] >= animation::maximum_bones)
+            return false;
+    }
     return true;
 }
 RageLocalHitbox local_hitbox(const std::byte* descriptor) noexcept {
@@ -160,7 +167,10 @@ void draw_client_hitbox(const ClientHitboxRuntime& runtime, const RageLocalHitbo
 
 void draw_client_hitboxes(const ClientHitboxRuntime& runtime, void* entity,
                           const ClientHitboxesRequest& request) {
-    auto& player = *runtime.players.get(request.entity_index);
+    auto* cached = runtime.players.get(request.entity_index);
+    if (!cached)
+        return;
+    auto& player = *cached;
     auto& ring = player.history;
     auto tick = request.has_tick
                     ? request.tick
@@ -176,10 +186,9 @@ void draw_client_hitboxes(const ClientHitboxRuntime& runtime, void* entity,
         return;
     if (tick == -1)
         tick = runtime.current_tick;
-    auto& selected_ring = runtime.players.get(request.entity_index)->history;
     const lagcomp::LagRecord* record = nullptr;
-    for (std::uint32_t i = 0; i < selected_ring.count; ++i) {
-        const auto* candidate = &selected_ring.at(i);
+    for (std::uint32_t i = 0; i < ring.count; ++i) {
+        const auto* candidate = &ring.at(i);
         if (candidate->header.simulation_tick <= tick && (candidate->header.flags & 4)) {
             record = candidate;
             break;
@@ -189,19 +198,22 @@ void draw_client_hitboxes(const ClientHitboxRuntime& runtime, void* entity,
     if (!record) {
         const auto* descriptor = static_cast<const std::byte*>(entity) + runtime.offsets.bone_cache;
         const auto count = read<std::int32_t>(descriptor, 0xC);
-        if (!count)
+        const auto* bones = read<const Matrix3x4*>(descriptor, 0);
+        if (!bones || count <= 0)
             return;
-        animation::select_hitbox_bone_matrices(
-            model.bone_model(),
-            {read<const Matrix3x4*>(descriptor, 0), static_cast<std::size_t>(count)}, matrices);
+        if (animation::select_hitbox_bone_matrices(model.bone_model(),
+                {bones, static_cast<std::size_t>(count)}, matrices) != model.count)
+            return;
     } else {
         matrices = record->matrices;
         const auto& offsets = runtime.offsets;
+        auto* collideable = engine::invoke<void*>(entity, 3);
+        auto* maximum = collideable ? engine::invoke<RageVector*>(collideable, 2) : nullptr;
+        if (!maximum)
+            return;
         const auto yaw = read<float>(entity, offsets.absolute_angles + 4);
         write(entity, offsets.absolute_angles + 4,
               request.flags & 1 ? request.yaw : player.native.reference_yaw);
-        auto* collideable = engine::invoke<void*>(entity, 3);
-        auto* maximum = engine::invoke<RageVector*>(collideable, 2);
         const auto max_z = (*maximum)[2];
         (*maximum)[2] = record->header.collision_max_z;
         const auto origin = read<RageVector>(entity, offsets.origin),
@@ -214,7 +226,7 @@ void draw_client_hitboxes(const ClientHitboxRuntime& runtime, void* entity,
                    field_0d = read<float>(entity, offsets.field_0d560fac);
         auto height = read<float>(&player.native, 0x12C),
              stamp = read<float>(&player.native, 0x148);
-        const auto& newest = selected_ring.at(0).header;
+        const auto& newest = ring.at(0).header;
         if (tick < newest.simulation_tick &&
             record->header.collision_max_z != newest.collision_max_z) {
             height = add(newest.origin[2], newest.collision_max_z);
@@ -223,8 +235,7 @@ void draw_client_hitboxes(const ClientHitboxRuntime& runtime, void* entity,
         write(entity, offsets.field_432b1f5b, height);
         write(entity, offsets.field_0d560fac, stamp);
         std::array<Matrix3x4, animation::maximum_bones> bones;
-        lagcomp::scatter_record_hitbox_matrices(matrices, model.bone_model().hitbox_bones,
-                                                bones.data());
+        lagcomp::scatter_record_hitbox_matrices(matrices, model.bone_model().hitbox_bones, bones);
         if (runtime.update_attachments) {
             const auto readable = read<std::uint32_t>(entity, offsets.bone_accessor + 8);
             const auto writable = read<std::uint32_t>(entity, offsets.bone_accessor + 12);

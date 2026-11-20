@@ -860,6 +860,7 @@ void rebuild_history_animation(client::PlayerState& owner, void* player, void* s
         write(player, abs_velocity, saved_abs_velocity);
     result.speed_fraction = read<float>(state, 0x11C);
     result.animation_publish_layer_weight = read<float>(layers, 0x138);
+    result.animation_rebuilt = true;
 }
 
 void step_history_animation(client::PlayerState& owner, void* player, void* state,

@@ -1,6 +1,7 @@
 #include "skeet/script/material_api.hpp"
 #include "skeet/effects/model_render.hpp"
 #include "skeet/engine/interface_call.hpp"
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <limits>
@@ -200,7 +201,7 @@ int MaterialModule::get_model_materials(void* state) {
     const auto& api = *bridge_->api;
     if (!ready())
         return 0;
-    std::array<void*, 128> materials;
+    std::array<void*, 128> materials{};
     int count = 0;
     if (api.gettop(state) >= 1) {
         const auto index = std::uint32_t(native_integer(api.checkinteger(state, 1)));
@@ -214,16 +215,16 @@ int MaterialModule::get_model_materials(void* state) {
                     count = invoke<int>(interfaces_.studio_data_cache, 45, studio, 128,
                                         materials.data());
                 if (!studio || !count) {
-                    count = invoke<int>(interfaces_.model_info, 18, model);
+                    count = std::clamp(invoke<int>(interfaces_.model_info, 18, model),
+                                       0, static_cast<int>(materials.size()));
                     if (count) {
-                        if (count > 128)
-                            count = 128;
                         invoke<void>(interfaces_.model_info, 19, model, count, materials.data());
                     }
                 }
             }
         }
     }
+    count = std::clamp(count, 0, static_cast<int>(materials.size()));
     api.createtable(state, count, 0);
     int output = 1;
     for (int n = 0; n < count; ++n) {

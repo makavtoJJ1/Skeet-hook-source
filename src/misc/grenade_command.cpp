@@ -86,9 +86,7 @@ GrenadeCommandRuntime::previous_command(const client::Command& command) const no
 
 void GrenadeCommandRuntime::phase1(void* player, const client::Command& command) {
     state.captured_command = command;
-    // Super toss previews must retain airborne input when predicting release.
-    if (!config.super_toss.value &&
-        !(field<std::uint32_t>(player, bindings.offsets.player_flags) & 1u))
+    if (!(field<std::uint32_t>(player, bindings.offsets.player_flags) & 1u))
         movement(state.captured_command, {});
 }
 
@@ -338,13 +336,15 @@ void GrenadeCommandRuntime::process_throw_release(client::CommandFrame& frame, v
         command.angles[1] -= recoil[1];
         command.angles[2] -= recoil[2];
         const auto velocity = field<esp::Vector3>(player, bindings.offsets.player_velocity);
-        auto angles = vector(command.angles);
-        const auto speed = throw_speed(weapon);
-        const auto strength =
-            clamp(field<float>(weapon, bindings.offsets.grenade_strength), 0.0f, 1.0f);
-        esp::compensate_grenade_movement(
-            velocity, (strength * 0.699999988079071f + 0.30000001192092896f) * speed, angles);
-        command.angles = {angles.x, angles.y, angles.z};
+        if (squared(velocity) > 4.0f) {
+            auto angles = vector(command.angles);
+            const auto speed = throw_speed(weapon);
+            const auto strength =
+                clamp(field<float>(weapon, bindings.offsets.grenade_strength), 0.0f, 1.0f);
+            esp::compensate_grenade_movement(
+                velocity, (strength * 0.699999988079071f + 0.30000001192092896f) * speed, angles);
+            command.angles = {angles.x, angles.y, angles.z};
+        }
     }
     *bindings.command_buttons = (*bindings.command_buttons & 0xfffffbffu) | 0x200u;
 }

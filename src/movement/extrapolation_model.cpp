@@ -87,6 +87,18 @@ std::optional<ExtrapolatedMotion> fit_span(const lagcomp::LagRecordHeader& older
 }
 }
 
+std::optional<int> pose_receive_age(std::int32_t now, std::int32_t received,
+                                    float receive_interval, float simulation_interval) noexcept {
+    if (!(receive_interval > 0) || !(simulation_interval > 0) ||
+        !std::isfinite(receive_interval) || !std::isfinite(simulation_interval))
+        return std::nullopt;
+    const auto elapsed = std::int64_t(now) - received;
+    const double ticks = double(elapsed) * receive_interval / simulation_interval;
+    if (ticks < 0 || ticks >= maximum_pose_extrapolation_ticks + 0.5)
+        return std::nullopt;
+    return int(std::round(ticks));
+}
+
 std::optional<ExtrapolatedMotion> fit_extrapolated_motion(
     const lagcomp::RecordRing& ring, const MovementSimulationRules& rules,
     std::int32_t ticks) noexcept {

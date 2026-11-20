@@ -100,7 +100,8 @@ private:
                                LagRecord&);
     void publish_record(client::PlayerState&, void* player, const CachedHistoryFrame&,
                         bool recording_active, bool enemy, bool forced_yaw, bool layers_changed,
-                        std::uint32_t update_flags, float speed_fraction, HistoryJobQueue&);
+                        std::uint32_t update_flags, float speed_fraction, bool animation_rebuilt,
+                        HistoryJobQueue&);
 };
 // One process history owner supplies the same canonical globals to deferred
 // workers. Bind once during its initialization; no task-local policy or TLS.

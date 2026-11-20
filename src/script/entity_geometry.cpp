@@ -1,4 +1,5 @@
 #include "entity_detail.hpp"
+#include "skeet/engine/studio_hitbox_set.hpp"
 #include "skeet/esp/player_engine.hpp"
 #include <cstring>
 #include <stdexcept>
@@ -24,10 +25,10 @@ int EntityModule::get_origin(void* state) {
                 push_vector(lua(), state, *engine::invoke<const esp::Vector3*>(value, 10));
                 return 3;
             }
-            if (engine::invoke<bool>(value, 158)) {
-                const auto& geometry = cache_.geometry(index);
-                if (geometry.alpha != 0.0f) {
-                    push_vector(lua(), state, geometry.origin);
+            if (index - 1u < 64u && engine::invoke<bool>(value, 158)) {
+                auto* record = cache_.get(index);
+                if (record && record->geometry.alpha != 0.0f) {
+                    push_vector(lua(), state, record->geometry.origin);
                     return 3;
                 }
             }
@@ -45,8 +46,9 @@ int EntityModule::get_bounding_box(void* state) {
     float alpha = 0;
     if (in_game()) {
         const auto index = argument_index(state, arguments > 1 ? 2 : 1);
-        if (index - 1u < 64u && entity(index)) {
-            const auto& geometry = cache_.geometry(index);
+        auto* record = index - 1u < 64u && entity(index) ? cache_.get(index) : nullptr;
+        if (record) {
+            const auto& geometry = record->geometry;
             if (!bindings_.projection)
                 throw std::logic_error("Entity bounding boxes require engine projection");
             Rectangle box;
@@ -96,9 +98,11 @@ int EntityModule::hitbox_position(void* state) {
     if (!header)
         return unavailable();
     const auto set_index = read<std::int32_t>(value, offsets.hitbox_set);
-    const auto* set = header + read<std::int32_t>(header, 0xb0) + set_index * 12;
+    const auto* set = engine::studio_hitbox_set(header, set_index);
+    if (!set)
+        return unavailable();
     const auto count = read<std::int32_t>(set, 4);
-    if (!count)
+    if (count <= 0)
         return unavailable();
     const auto* first = set + read<std::int32_t>(set, 8);
     const std::byte* hitbox = nullptr;
@@ -131,15 +135,17 @@ int EntityModule::hitbox_position(void* state) {
         return unavailable();
     const Matrix3x4* matrix = nullptr;
     auto* record = cache_.get(index);
-    if (!bridge_->render_context.cursor && record->history.count &&
+    if (!bridge_->render_context.cursor && record && record->history.count &&
+        std::size_t(hitbox_index) < record->history.at(0).matrices.size() &&
         (record->history.at(0).header.flags & 4))
         matrix = &record->history.at(0).matrices[std::uint32_t(hitbox_index)];
     if (!matrix) {
         const auto* cache = static_cast<const std::byte*>(value) + offsets.bone_cache;
         const auto bone_index = read<std::int32_t>(hitbox, 0);
-        if (read<std::int32_t>(cache, 0xc) <= bone_index)
+        const auto* bones = read<const Matrix3x4*>(cache, 0);
+        if (!bones || bone_index < 0 || bone_index >= read<std::int32_t>(cache, 0xc))
             return unavailable();
-        matrix = read<const Matrix3x4*>(cache, 0) + bone_index;
+        matrix = bones + bone_index;
     }
     const auto minimum = read<esp::Vector3>(hitbox, 8), maximum = read<esp::Vector3>(hitbox, 0x14);
     const esp::Vector3 center{(maximum.x - minimum.x) * 0.5f + minimum.x,
@@ -164,8 +170,10 @@ int EntityModule::get_esp_data(void* state) {
         if (index >= 8192)
             return lua().argerror(state, 1, "invalid entity index");
         auto* value = entity(index);
-        if (value && engine::invoke<bool>(value, 158)) {
-            auto& record = *cache_.get(index);
+        auto* cached = index - 1u < 64u && value && engine::invoke<bool>(value, 158)
+                           ? cache_.get(index) : nullptr;
+        if (cached) {
+            auto& record = *cached;
             lua().createtable(state, 0, 3);
             lua().pushnumber(state, record.geometry.alpha);
             lua().setfield(state, -2, "alpha");

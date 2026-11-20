@@ -40,5 +40,5 @@ bool select_target_history_record(client::CommandFrame&, void* player, std::int3
                                   const MovementExtrapolationLiveBindings&,
                                   const client::CommandBudgetBindings&,
                                   const LagRecord** selected_source = nullptr,
-                                  std::int32_t* predicted_ticks = nullptr);
+                                  std::int32_t* predicted_ticks = nullptr, RebuildUsage* usage = nullptr);
 } // namespace skeet::lagcomp

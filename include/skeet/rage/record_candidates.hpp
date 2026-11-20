@@ -23,6 +23,9 @@ struct RecordCandidateBindings {
     ExperimentalSwitch rebuild_pose{};
 };
 
+std::optional<std::int32_t> requested_pose_record_tick(const client::CommandFrame&, void* target,
+    const client::PlayerState&, const RecordCandidateBindings&);
+
 // Complete433AEBA8. Appends simulation ticks to the existing output, retaining
 // its prefix and the native priority/cap rules. The canonical player cache is
 // supplied by the acquisition owner; the network index still comes from the

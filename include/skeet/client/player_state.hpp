@@ -1,4 +1,5 @@
 #pragma once
+#include "skeet/lagcomp/rebuild_usage.hpp"
 #include "skeet/engine/jobs.hpp"
 #include "skeet/esp/player_geometry.hpp"
 #include "skeet/lagcomp/history.hpp"
@@ -101,6 +102,12 @@ struct PlayerState {
     // Reuse the existing portable ring, once per player. On x86 its pointers
     // publish directly into native_history_links; host-width links stay here.
     lagcomp::RecordRing history;
+    std::array<lagcomp::AnimationRebuildUsage, 32> rebuilt_animation_by_slot{};
+    lagcomp::AnimationRebuildUsage fallback_animation_rebuilt{};
+    lagcomp::AnimationRebuildUsage animation_rebuilt(std::uint32_t age) const noexcept {
+        return age < history.count ? rebuilt_animation_by_slot[(history.first + age) & 31u]
+                                   : lagcomp::AnimationRebuildUsage{};
+    }
     resolver_runtime::JitterTracking jitter;
     resolver_runtime::EnvironmentOwner environment() const noexcept;
     void environment(const resolver_runtime::EnvironmentOwner&) noexcept;

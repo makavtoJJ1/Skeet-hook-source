@@ -1,6 +1,7 @@
 #include "skeet/rage/engine_ballistics.hpp"
 #include "skeet/engine/interface_call.hpp"
 #include "skeet/engine/trace.hpp"
+#include "skeet/rage/bullet_filter_methods.hpp"
 #include <bit>
 #include <cstring>
 #include <stdexcept>
@@ -84,7 +85,7 @@ struct ExtendedFilter {
     float minimum_damage = 0;
     const EngineBallisticBindings* bindings;
     BallisticFilterKind kind;
-    std::array<void*, 5> methods{};
+    BulletFilterMethods methods;
     static ExtendedFilter& self(void* receiver) noexcept {
         return *static_cast<ExtendedFilter*>(receiver);
     }
@@ -125,40 +126,21 @@ struct ExtendedFilter {
         return reinterpret_cast<engine::MemberFunction<std::int32_t>>(method(receiver, 1))(
             receiver);
     }
-    static void BALLISTIC_MEMBER set_source(void* receiver, void* entity) {
-        reinterpret_cast<engine::MemberFunction<void, void*>>(method(receiver, 2))(receiver,
-                                                                                   entity);
-    }
-    static void BALLISTIC_MEMBER set_last_hit(void* receiver, void* entity) {
-        reinterpret_cast<engine::MemberFunction<void, void*>>(method(receiver, 4))(receiver,
-                                                                                   entity);
-    }
-    ExtendedFilter(const EngineBallisticBindings& b)
-        : vtable(nullptr), bindings(&b), kind(BallisticFilterKind::supplied) {
-        initialize();
-    }
+    ExtendedFilter(const EngineBallisticBindings& b) : ExtendedFilter(b, BallisticFilter{}) {}
     ExtendedFilter(const EngineBallisticBindings& b, const BallisticFilter& f)
         : vtable(nullptr), fields_04(f.native_fields_04), mask(f.mask), exit_mask(f.exit_mask),
-          minimum_damage(f.minimum_damage), bindings(&b), kind(f.kind) {
-        initialize();
+          minimum_damage(f.minimum_damage), bindings(&b), kind(f.kind),
+          methods(b.extended_filter_vtable, reinterpret_cast<void*>(should_hit),
+                  reinterpret_cast<void*>(trace_type)) {
         fields_04[4] = f.preferred_entity;
+        vtable = methods.data();
     }
     ExtendedFilter(const ExtendedFilter&) = delete;
     ExtendedFilter& operator=(const ExtendedFilter&) = delete;
     void save(const BallisticFilter& f) const noexcept {
         f.native_fields_04 = fields_04;
     }
-    void initialize() {
-        const auto external = bindings->extended_filter_vtable;
-        if (!external)
-            throw std::logic_error("Required ballistic extended filter table is not bound");
-        //The owners use0/1/2/4. Preserve the genuine slot3 pointer without
-        //inventing a C++ signature for the unused external engine method.
-        methods = {reinterpret_cast<void*>(should_hit), reinterpret_cast<void*>(trace_type),
-                   reinterpret_cast<void*>(set_source), external[3],
-                   reinterpret_cast<void*>(set_last_hit)};
-        vtable = methods.data();
-    }
+
 };
 #undef BALLISTIC_MEMBER
 #if UINTPTR_MAX == UINT32_MAX
@@ -169,9 +151,13 @@ static_assert(offsetof(ExtendedFilter, minimum_damage) == 0x20);
 }
 
 std::int32_t EngineBallistics::trace_bullet(BallisticEntity source, const BallisticVector& start,
-                                           const BallisticVector& target, BallisticQuery& query) {
-    BallisticFilter filter{nullptr, 0, 0x4600400Bu, 0x4600400Bu, 1.0f};
+                                           const BallisticVector& target, BallisticQuery& query,
+                                           bool skip_players) {
+    const auto mask = skip_players ? 0x0600400Bu : 0x4600400Bu;
+    BallisticFilter filter{nullptr, 0, mask, mask, 1.0f};
     ExtendedFilter native(bindings_, filter);
+    if (skip_players)
+        native.kind = BallisticFilterKind::reject_players;
     filter.object = &native;
     return trace_ballistic_bullet(*this, source, start, target, filter, query);
 }
@@ -192,22 +178,22 @@ void EngineBallistics::bind_source(const BallisticFilter& filter, BallisticEntit
         filter.kind == BallisticFilterKind::reject_players ||
         filter.kind == BallisticFilterKind::world_only) {
         ExtendedFilter native(bindings_, filter);
-        engine::invoke<void>(&native, 2, pointer(source));
+        engine::invoke<void>(&native, BulletFilterMethods::source_slot, pointer(source));
         native.save(filter);
         return;
     }
-    engine::invoke<void>(filter.object, 2, pointer(source));
+    engine::invoke<void>(filter.object, BulletFilterMethods::source_slot, pointer(source));
 }
 void EngineBallistics::bind_last_hit(const BallisticFilter& filter, BallisticEntity hit) {
     if (filter.kind == BallisticFilterKind::reject_entities ||
         filter.kind == BallisticFilterKind::reject_players ||
         filter.kind == BallisticFilterKind::world_only) {
         ExtendedFilter native(bindings_, filter);
-        engine::invoke<void>(&native, 4, pointer(hit));
+        engine::invoke<void>(&native, BulletFilterMethods::last_hit_slot, pointer(hit));
         native.save(filter);
         return;
     }
-    engine::invoke<void>(filter.object, 4, pointer(hit));
+    engine::invoke<void>(filter.object, BulletFilterMethods::last_hit_slot, pointer(hit));
 }
 bool EngineBallistics::accepts(const BallisticFilter& filter, BallisticEntity entity,
                                std::uint32_t mask) {

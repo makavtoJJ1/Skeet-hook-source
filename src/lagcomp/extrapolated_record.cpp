@@ -82,20 +82,21 @@ RecordCaptureResult prepare_extrapolated_record(client::CommandFrame& frame, voi
 RecordCaptureResult prepare_extrapolated_record(client::CommandFrame& frame, void* player,
                                                 LagRecord& destination,
                                                 const ExtrapolatedRecordBindings& bindings,
-                                                const client::CommandBudgetBindings& budget) {
+                                                const client::CommandBudgetBindings& budget,
+                                                bool rebuild_pose) {
     auto captured = capture_extrapolation_source<true>(frame, player, destination, bindings);
-    if (bindings.rebuild_pose) {
+    if (rebuild_pose) {
         if (captured.changed)
             return captured;
         const auto& entity = bindings.preparation.entity;
         const auto receive_tick = sample_receive_tick(entity.engine, entity.receive_interval);
-        const auto elapsed = std::int64_t(receive_tick) - destination.header.receive_tick;
-        const double ticks = double(elapsed) * entity.receive_interval / entity.interval;
-        if (!std::isfinite(ticks) || ticks < 0.0 || ticks >= maximum_pose_extrapolation_ticks + 0.5) {
+        const auto ticks = pose_receive_age(receive_tick, destination.header.receive_tick,
+                                            entity.receive_interval, entity.interval);
+        if (!ticks) {
             captured.changed = -1;
             return captured;
         }
-        captured.ticks = std::int32_t(std::round(ticks));
+        captured.ticks = *ticks;
         if (captured.ticks > 0 && captured.ticks > client::query_command_budget(budget)) {
             captured.ticks = 0;
             captured.changed = -1;
@@ -222,10 +223,9 @@ namespace {
 bool finish_live_record_capture(const RecordCaptureResult& captured, void* player,
                                 LagRecord& destination, std::uint32_t& output_flags,
                                 const ExtrapolatedRecordBindings& bindings,
-                                const animation::BoneRuntime& bones) {
+                                const animation::BoneRuntime& bones, bool rebuild_pose) {
     if (captured.changed < 0)
         return false;
-    const bool rebuild_pose = bool(bindings.rebuild_pose);
     if (captured.changed > 0) {
         if (!rebuild_pose || captured.ticks > 0)
             output_flags |= 0x20u;
@@ -257,19 +257,29 @@ bool capture_extrapolated_record(client::CommandFrame& frame, void* player, LagR
                                  const animation::BoneRuntime& bones,
                                  const MovementExtrapolationLiveBindings& movement,
                                  const client::CommandBudgetBindings& budget,
-                                 std::int32_t* predicted_ticks) {
+                                 std::int32_t* predicted_ticks, RebuildUsage* usage) {
+    if (usage)
+        *usage = {};
     if (predicted_ticks)
         *predicted_ticks = 0;
-    auto captured = prepare_extrapolated_record(frame, player, destination, bindings, budget);
+    const bool rebuild_pose = bool(bindings.rebuild_pose);
+    auto captured = prepare_extrapolated_record(frame, player, destination, bindings, budget,
+                                               rebuild_pose);
+    const auto rebuilt_animation = captured.changed == 0 ? captured.owner.animation_rebuilt(0)
+                                                          : AnimationRebuildUsage{};
     const auto source_tick = destination.header.simulation_tick;
     if (captured.ticks > 0)
         captured.changed = extrapolate_lag_record(player, captured.owner, destination,
                                                   captured.ticks, bindings.movement, movement,
-                                                  bool(bindings.rebuild_pose));
-    if (!finish_live_record_capture(captured, player, destination, output_flags, bindings, bones))
+                                                  rebuild_pose);
+    if (!finish_live_record_capture(captured, player, destination, output_flags, bindings, bones,
+                                    rebuild_pose))
         return false;
     if (predicted_ticks && captured.changed > 0)
         *predicted_ticks = destination.header.simulation_tick - source_tick;
+    if (usage)
+        *usage = {rebuilt_animation, rebuild_pose && captured.changed > 0 &&
+                                    destination.header.simulation_tick > source_tick};
     return true;
 }
 

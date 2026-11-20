@@ -3,6 +3,7 @@
 #include "skeet/client/command_orchestrator.hpp"
 #include "skeet/engine/interface_call.hpp"
 #include "skeet/lagcomp/record_validity.hpp"
+#include "skeet/lagcomp/receive_timing.hpp"
 #include "skeet/movement/extrapolation_model.hpp"
 #include <algorithm>
 #include <bit>
@@ -261,6 +262,31 @@ void append_masked_ticks(const lagcomp::RecordRing& ring, std::uint32_t mask, st
         }
 }
 }
+std::optional<std::int32_t> requested_pose_record_tick(const client::CommandFrame& frame,
+    void* target, const client::PlayerState& player, const RecordCandidateBindings& bindings) {
+    const auto& ring = player.history;
+    if (!bindings.rebuild_pose || ring.count < 2 || convar_integer(bindings.lag_compensation) == 0)
+        return std::nullopt;
+    const auto& newest = ring.at(0);
+    const auto index = engine::invoke<std::uint32_t>(static_cast<std::byte*>(target) + 8, 10);
+    if ((newest.header.flags & 0x300u) ||
+        !target_history_is_usable(player.native, ring, frame, index, bindings.interval) ||
+        (bindings.validate_record && !lagcomp::record_geometry_valid(newest)))
+        return std::nullopt;
+    const auto received = lagcomp::sample_receive_tick(bindings.engine_client, bindings.receive_interval);
+    const auto age = pose_receive_age(received, newest.header.receive_tick,
+                                      bindings.receive_interval, bindings.interval);
+    if (!age || *age == 0)
+        return std::nullopt;
+    const auto window = candidate_window(frame, bindings);
+    const auto tick = std::int64_t(newest.header.simulation_tick) + *age;
+    if (tick < std::max(window.corrected, add(ceiling_tick(window.low), 1)) ||
+        tick > std::min(window.upper, sub(floor_tick(window.high), 1)))
+        return std::nullopt;
+    const auto limit = bindings.live_budget ? client::query_command_budget(*bindings.live_budget)
+                                            : bindings.prediction_limit.value();
+    return *age <= limit ? std::optional<std::int32_t>(std::int32_t(tick)) : std::nullopt;
+}
 void append_target_record_ticks(const client::CommandFrame& frame, void* target,
                                 client::PlayerState& player, std::uint32_t maximum,
                                 const RecordCandidateBindings& bindings,
@@ -310,14 +336,14 @@ void append_target_record_ticks(const client::CommandFrame& frame, void* target,
         previous = origin;
     }
     if (!mask) {
-        if (!extrapolate || ring.count < 2 || (ring.at(0).header.flags & 0x200U))
-            return;
         if (bindings.rebuild_pose) {
-            const auto ticks = std::int64_t(first) - ring.at(0).header.simulation_tick;
-            if (ticks > 0 && ticks <= maximum_pose_extrapolation_ticks && first <= last)
-                output.push_back(first);
+            if (const auto tick = requested_pose_record_tick(frame, target, player, bindings);
+                tick && (output.empty() || output.back() != *tick))
+                output.push_back(*tick);
             return;
         }
+        if (!extrapolate || ring.count < 2 || (ring.at(0).header.flags & 0x200U))
+            return;
         const auto tick = extrapolated_tick(frame, target, player, bindings, window);
         if (tick != -1)
             output.push_back(tick);

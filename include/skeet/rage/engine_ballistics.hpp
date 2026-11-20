@@ -44,7 +44,8 @@ public:
     // Own the complete engine filter for the whole shot, including source and
     // last-hit setters. A skip_source ray filter cannot be used for a bullet.
     std::int32_t trace_bullet(BallisticEntity source, const BallisticVector& start,
-                              const BallisticVector& target, BallisticQuery& query);
+                              const BallisticVector& target, BallisticQuery& query,
+                              bool skip_players = false);
     std::int32_t filter_type(const BallisticFilter&) override;
     void bind_source(const BallisticFilter&, BallisticEntity) override;
     void bind_last_hit(const BallisticFilter&, BallisticEntity) override;

@@ -37,7 +37,10 @@ void publish_bone_cache(lagcomp::EntityRecordScope& scope,
     const auto& entity = bindings.preparation.entity;
     const auto& offsets = entity.offsets;
     const auto cache = field<Matrix3x4*>(scope.player, offsets.bone_cache);
-    bones.scatter_hitbox_bone_matrices(scope.player, scope.record.matrices, {cache, 256});
+    const auto count = field<int>(scope.player, offsets.bone_cache + 0xc);
+    if (cache && count > 0)
+        bones.scatter_hitbox_bone_matrices(scope.player, scope.record.matrices,
+                                           {cache, static_cast<std::size_t>(count)});
     store(scope.player, offsets.bone_accessor + 8, 0xFFF00U);
     store(scope.player, offsets.bone_accessor + 12, 0xFFF00U);
     if (current_bone_counter)

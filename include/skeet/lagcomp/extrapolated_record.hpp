@@ -1,4 +1,5 @@
 #pragma once
+#include "skeet/lagcomp/rebuild_usage.hpp"
 #include "record_selection.hpp"
 #include "skeet/client/command_frame.hpp"
 #include "skeet/client/player_state.hpp"
@@ -58,6 +59,6 @@ bool capture_extrapolated_record(client::CommandFrame&, void* player, LagRecord&
                                  const animation::BoneRuntime&,
                                  const MovementExtrapolationLiveBindings&,
                                  const client::CommandBudgetBindings&,
-                                 std::int32_t* predicted_ticks = nullptr);
+                                 std::int32_t* predicted_ticks = nullptr, RebuildUsage* usage = nullptr);
 
 } // namespace skeet::lagcomp

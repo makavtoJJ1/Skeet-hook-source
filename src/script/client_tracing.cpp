@@ -1,6 +1,6 @@
 #include "client_detail.hpp"
 #include "skeet/rage/targeting_commit.hpp"
-#include <algorithm>
+#include "skeet/rage/engine_ballistics.hpp"
 #include <stdexcept>
 
 namespace skeet::script {
@@ -35,40 +35,7 @@ BallisticQuery weapon_query(ClientBindings& bindings, void* source) {
     query.reserved = 1;
     return query;
 }
-// Layout of the inherited engine trace filter. The first four methods remain
-// actual engine entries; only433B4EB6's player/owner rejection is client code.
-struct BulletFilter {
-    void** virtuals;
-    void* source = nullptr;
-    void* last_hit = nullptr;
-    std::uint32_t field_c = 0, field_10 = 0;
-    void* preferred = nullptr;
-    std::uint32_t mask, exit_mask;
-    float minimum = 1;
-    ClientBindings* bindings;
-};
-#if defined(_M_IX86) || defined(__i386__)
-bool __fastcall exclude_players(BulletFilter* self, void*, void* handle_entity,
-                                std::uint32_t mask) {
-#else
-bool exclude_players(BulletFilter* self, void* handle_entity, std::uint32_t mask) {
-#endif
-    auto& bindings = *self->bindings;
-    if (handle_entity) {
-        auto* entity = engine::invoke<void*>(handle_entity, 7);
-        while (entity) {
-            if (field<std::int32_t>(entity, bindings.offsets.collision_group) == 11 ||
-                engine::invoke<bool>(entity, 158))
-                return false;
-            const auto owner = field<std::int32_t>(entity, bindings.offsets.owner_handle);
-            if (owner == -1)
-                break;
-            entity = engine::invoke<void*>(bindings.entity_list, 4, owner);
-        }
-    }
-    using Accept = engine::MemberFunction<bool, void*, std::uint32_t>;
-    return reinterpret_cast<Accept>(bindings.bullet_filter_vtable[0])(self, handle_entity, mask);
-}
+
 }
 int ClientModule::tracing(Export operation, void* state) {
     using namespace client_detail;
@@ -148,17 +115,7 @@ int ClientModule::tracing(Export operation, void* state) {
         return 2;
     }
     const bool skip_players = count >= 8 && api.toboolean(state, 8) != 0;
-    if (!bindings.bullet_filter_vtable)
-        throw std::logic_error("Client bullet trace requires actual engine filter vtable");
-    std::array<void*, 4> virtuals;
-    std::copy_n(bindings.bullet_filter_vtable, 4, virtuals.begin());
-    if (skip_players)
-        virtuals[0] = reinterpret_cast<void*>(exclude_players);
-    const auto mask = skip_players ? 0x0600400bu : 0x4600400bu;
-    BulletFilter object{virtuals.data(), nullptr, nullptr, 0, 0, nullptr, mask, mask, 1, &bindings};
-    BallisticFilter filter{&object, 0, mask, mask, 1, BallisticFilterKind::supplied};
-    const auto result =
-        trace_ballistic_bullet(engine, entity_token(source), start, target, filter, query);
+    const auto result = engine.trace_bullet(entity_token(source), start, target, query, skip_players);
     if (!skip_players && result && query.trace.entity)
         api.pushinteger(state, entity_index(query.trace.entity));
     else

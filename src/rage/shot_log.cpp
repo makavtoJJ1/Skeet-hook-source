@@ -10,16 +10,31 @@ void log_shot_fire(const ShotLogSettings& settings, misc::NormalLog& output,
                    const client::CommandFrame& frame, const client::Command& command,
                    const TargetCandidate& candidate, const AcquisitionEvaluation& evaluation,
                    std::int32_t id, bool pending) {
-    if (!settings.detailed.value)
-        return;
     const auto& point = candidate.primary;
     const auto& record = evaluation.record.header;
+    const auto used = evaluation.rebuild_usage;
+    const char* prefix = used.animation.matrices
+        ? (used.extrapolated_pose ? "yes anim | yes extrap " : "yes anim | no extrap ")
+        : (used.extrapolated_pose ? "no anim | yes extrap " : "no anim | no extrap ");
+    constexpr std::uint32_t green = 0xFF60DC55u;
+    if (!settings.detailed.value) {
+        if (used.extrapolated_pose)
+            output.console_prefixed(prefix, green, "#%d +%dt", id, evaluation.extrapolation_ticks);
+        else {
+            const auto status = evaluation.forecast_status;
+            const char* detail = status == PoseForecastStatus::rejected ? " (forecast rejected)"
+                               : status == PoseForecastStatus::submitted ? " (history selected)" : "";
+            output.console_prefixed(prefix, green, "#%d%s", id, detail);
+        }
+        return;
+    }
     const auto policy = evaluation.settings.scan_policy();
-    output.console_format(
-        "[rage] FIRE id=%d cmd=%d target=%u hp=%d record_tick=%d selected_tick=%d cmd_tick=%d "
+    output.console_prefixed(prefix, green,
+        "[rage] FIRE "
+        "id=%d cmd=%d target=%u hp=%d record_tick=%d selected_tick=%d cmd_tick=%d "
         "hitbox=%d group=%d point=(%.2f,%.2f,%.2f) damage=%d/min%d hc=%.2f%%/min%.2f%% "
         "spread=%.6f inaccuracy=%.6f safe=%u boosted=%u prefer_body=%u prefer_safe=%u "
-        "point_rank=0x%X target_rank=0x%X scans=%u feedback=%s",
+        "point_rank=0x%X target_rank=0x%X scans=%u feedback=%s anim_replay=%s",
         id, frame.command_number_ac, candidate.entity_index, candidate.health,
         record.simulation_tick, evaluation.requested_tick, command.tick, point.hitbox,
         point.hitgroup, point.position[0], point.position[1], point.position[2], point.damage,
@@ -27,7 +42,8 @@ void log_shot_fire(const ShotLogSettings& settings, misc::NormalLog& output,
         frame.spread_d0, frame.inaccuracy_c4, unsigned(bool(point.flags & 1u)),
         unsigned(bool(point.flags & 4u)), unsigned(candidate.prefer_body),
         unsigned(candidate.prefer_safe), point.priority, candidate.priority,
-        evaluation.ballistic_evaluations, pending ? "pending" : "unavailable");
+        evaluation.ballistic_evaluations, pending ? "pending" : "unavailable",
+        used.animation.replay ? "yes" : "no");
     output.console_format(
         "[rage] RECORD id=%d cmd=%d recv_tick=%d record_cmd_tick=%d origin=(%.2f,%.2f,%.2f) "
         "velocity=(%.2f,%.2f,%.2f) duck=%.3f eye_yaw=%.2f anim_yaw=%.2f "
@@ -44,9 +60,14 @@ void log_shot_fire(const ShotLogSettings& settings, misc::NormalLog& output,
 void log_shot_result(const ShotLogSettings& settings, misc::NormalLog& output,
                      const ShotRecordView& shot, bool hit, std::uint32_t reason,
                      std::int32_t target, std::int32_t group, std::int32_t damage) {
-    if (!settings.detailed.value)
-        return;
     const auto event = shot.script_shot();
+    if (!settings.detailed.value) {
+        if (hit)
+            output.console_format("#%d HIT %d dmg", event.id, damage);
+        else
+            output.console_format("#%d %s", event.id, reason == 5 ? "UNCONFIRMED" : "MISS");
+        return;
+    }
     // Choke reconciliation can change words[3]; words[1] is the firing command.
     const auto command = std::bit_cast<std::int32_t>(shot.record.words[1]);
     const auto& record = shot.record.state.record.header;

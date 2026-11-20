@@ -70,7 +70,9 @@ bool select_target_history_record(
     LagRecord& destination, std::uint32_t& output_flags, const HistorySelectionBindings& bindings,
     const animation::BoneRuntime& bones, const MovementExtrapolationLiveBindings& movement,
     const client::CommandBudgetBindings& budget, const LagRecord** selected_source,
-    std::int32_t* predicted_ticks) {
+    std::int32_t* predicted_ticks, RebuildUsage* usage) {
+    if (usage)
+        *usage = {};
     if (predicted_ticks)
         *predicted_ticks = 0;
     const auto& extrapolation = bindings.extrapolation;
@@ -101,13 +103,18 @@ bool select_target_history_record(
                                    std::bit_cast<std::int32_t>(frame.field_18c)};
     const auto window = history_tick_window(timing);
     auto effective_tick = requested_tick;
+    auto animation_rebuilt = owner.animation_rebuilt(choice.ordinal);
     if (const auto* older = history_interpolation_source(
             owner.history, choice.ordinal, *choice.source, requested_tick, plan.ticks, window)) {
-        interpolate_history_record(
+        const bool use_endpoint = bindings.use_captured_endpoint_pose();
+        const auto fraction = interpolate_history_record(
             destination, *choice.source, *older,
             float(requested_tick) * entity.interval,
             entity.interval, bindings.matrix_scratch, output_flags, bindings.rotation,
-            bindings.use_captured_endpoint_pose());
+            use_endpoint);
+        if (!(use_endpoint && fraction == 1.0f) &&
+            (older->header.flags & 4u))
+            animation_rebuilt = owner.animation_rebuilt(choice.ordinal + 1u);
         effective_tick = window.last;
     }
     const bool had_alternatives = (choice.source->header.flags & 0x80u) != 0;
@@ -170,6 +177,8 @@ bool select_target_history_record(
         return false;
     if (selected_source && destination.header.field_00)
         *selected_source = choice.source;
+    if (usage)
+        *usage = {animation_rebuilt, rebuild_pose && bool(output_flags & 0x20u)};
     return true;
 }
 } //namespace skeet::lagcomp

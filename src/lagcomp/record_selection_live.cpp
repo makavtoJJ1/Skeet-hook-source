@@ -59,7 +59,10 @@ bool select_and_apply_history_record_live(EntityRecordScope& scope,
     if (scope.record.header.flags & 4u) {
         const auto& offsets = runtime.offsets;
         auto* cache = read<Matrix3x4*>(scope.player, offsets.bone_cache);
-        bones.scatter_hitbox_bone_matrices(scope.player, scope.record.matrices, cache);
+        const int count = read<int>(scope.player, offsets.bone_cache + 0xc);
+        if (cache && count > 0)
+            bones.scatter_hitbox_bone_matrices(scope.player, scope.record.matrices,
+                                               {cache, static_cast<std::size_t>(count)});
         write(scope.player, offsets.bone_accessor + 8, 0xFFF00u);
         write(scope.player, offsets.bone_accessor + 12, 0xFFF00u);
         if (context.current_bone_counter)

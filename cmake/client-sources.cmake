@@ -145,7 +145,6 @@ target_sources(skeet_core PRIVATE
   src/esp/grenade_prediction_draw.cpp
   src/esp/grenade_prediction_entity.cpp
   src/esp/grenade_prediction_launch.cpp
-  src/esp/grenade_compensation.cpp
   src/esp/grenade_prediction_warning.cpp
   src/events/hit_log.cpp
   src/events/hit_marker.cpp

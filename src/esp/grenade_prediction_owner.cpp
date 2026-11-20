@@ -4,13 +4,9 @@
 namespace skeet::esp {
 bool begin_grenade_trajectory(GrenadeTrajectoryOwner& owner, const GrenadeEspConfig& config,
                               const GrenadeTrajectoryFrame& frame) noexcept {
-    if (frame.throw_input.compensate_movement)
-        owner.smoothed_velocity = frame.motion_target;
-    else {
-        owner.smoothed_velocity.x += (frame.motion_target.x - owner.smoothed_velocity.x) * 0.2f;
-        owner.smoothed_velocity.y += (frame.motion_target.y - owner.smoothed_velocity.y) * 0.2f;
-        owner.smoothed_velocity.z += (frame.motion_target.z - owner.smoothed_velocity.z) * 0.2f;
-    }
+    owner.smoothed_velocity.x += (frame.motion_target.x - owner.smoothed_velocity.x) * 0.2f;
+    owner.smoothed_velocity.y += (frame.motion_target.y - owner.smoothed_velocity.y) * 0.2f;
+    owner.smoothed_velocity.z += (frame.motion_target.z - owner.smoothed_velocity.z) * 0.2f;
     if (frame.engine_reject_148 || frame.engine_reject_174 || frame.game_player_override)
         return false;
     if (!config.trajectory.value || !frame.player_entity || frame.movement_type == 10 ||

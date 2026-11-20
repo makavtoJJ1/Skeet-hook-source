@@ -74,8 +74,6 @@ struct BoneRuntime {
     // intact; attachment updates temporarily force only the two accessor masks.
     void scatter_hitbox_bone_matrices(const void* player, std::span<const Matrix3x4> hitboxes,
                                       std::span<Matrix3x4> bones) const;
-    void scatter_hitbox_bone_matrices(const void* player, std::span<const Matrix3x4> hitboxes,
-                                      Matrix3x4* bones) const;
     void update_bone_attachments(void* player, std::span<Matrix3x4>, std::uint32_t mask) const;
     // Complete4338AC35: scatter, genuine attachment update, then a fresh model
     // selection. The engine may change the selected studio/set during update.

@@ -2,11 +2,13 @@
 #include "skeet/engine/interface_call.hpp"
 #include "skeet/rage_damage.hpp"
 #include "skeet/lagcomp/live_record_attachments.hpp"
+#include <algorithm>
 #include <bit>
 #include <cmath>
 #include <cstring>
 #include <cstdlib>
 #include <immintrin.h>
+#include <utility>
 
 namespace skeet::rage {
 namespace {
@@ -258,9 +260,24 @@ AcquisitionTargetTicks acquisition_target_ticks(const client::CommandFrame& fram
                                                 AcquisitionTargetSettings& settings,
                                                 const TargetPreparationBindings& b,
                                                 const RecordCandidateBindings& timing) {
-    constexpr std::array<std::uint32_t, 5> maximum_records{1, 1, 3, 2, 5}; //43474950
-    const auto maximum = maximum_records[settings.words[0]];
+    const auto maximum = settings.record_limit();
     AcquisitionTargetTicks result;
+    const auto predicted = requested_pose_record_tick(frame, target, player, timing);
+    const auto finish = [&]() -> AcquisitionTargetTicks {
+        if (timing.rebuild_pose && player.history.count) {
+            const auto newest = player.history.at(0).header.simulation_tick;
+            std::erase_if(result.values, [&](int tick) { return tick > newest; });
+        }
+        if (result.values.size() > maximum)
+            result.values.resize(maximum);
+        // Only accepted records consume scan slots. Keep the measured forecast first.
+        if (predicted) {
+            result.values.insert(result.values.begin(), *predicted);
+            if (settings.words[0])
+                result.descriptor_flags = 4;
+        }
+        return std::move(result);
+    };
     const auto window = lagcomp::history_tick_window(
         {timing.current_time, field<float>(&frame, 0x198), timing.interpolation, timing.interval,
          timing.maximum_unlag_ms, field<std::int32_t>(&frame, 0xD4),
@@ -287,7 +304,7 @@ AcquisitionTargetTicks acquisition_target_ticks(const client::CommandFrame& fram
             result.descriptor_flags = 4;
         } else {
             if (!player.history.count)
-                return result;
+                return finish();
             const auto first = window.corrected > window.first ? window.corrected : window.first;
             std::int32_t stop_tick = player.history.at(0).header.simulation_tick;
             for (std::uint32_t n = 0; n < player.history.count; ++n) {
@@ -297,7 +314,7 @@ AcquisitionTargetTicks acquisition_target_ticks(const client::CommandFrame& fram
                     break;
             }
             if (window.last < stop_tick)
-                return result;
+                return finish();
             const auto* layers = field<const std::byte*>(target, b.offsets.animation_layers);
             if (0.00150000001303851604461669921875f > field<float>(layers, 0x178)) {
                 if (target_history_yaw_changed(target, player, b.offsets.animation_state))
@@ -311,19 +328,17 @@ AcquisitionTargetTicks acquisition_target_ticks(const client::CommandFrame& fram
                 const auto difference =
                     std::bit_cast<std::int32_t>(std::uint32_t(tick) - std::uint32_t(receive_tick));
                 if (difference > 2)
-                    return result;
+                    return finish();
             }
             result.values.push_back(clamp_newest(first, window.last));
         }
     }
     if (result.values.empty()) {
         if ((b.state.flags & 1U) || !player.history.count)
-            return result;
+            return finish();
         result.values.push_back(clamp_newest(window.first, window.last));
     }
-    if (result.values.size() > maximum)
-        result.values.resize(maximum);
-    return result;
+    return finish();
 }
 namespace {
 bool prediction_damage_gate(const client::CommandFrame& frame, const client::PlayerState& player,

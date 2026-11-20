@@ -65,13 +65,9 @@ void GrenadeLiveScene::Storage::draw(ui::RenderQueue& queue,
                                      GrenadeWarningOwner& warnings) {
     auto& smooth = command.trajectory_velocity;
     const auto target = command.live_velocity;
-    if (settings.super_toss.value)
-        smooth = target;
-    else {
-        smooth.x += (target.x - smooth.x) * 0.2f;
-        smooth.y += (target.y - smooth.y) * 0.2f;
-        smooth.z += (target.z - smooth.z) * 0.2f;
-    }
+    smooth.x += (target.x - smooth.x) * 0.2f;
+    smooth.y += (target.y - smooth.y) * 0.2f;
+    smooth.z += (target.z - smooth.z) * 0.2f;
     const auto& b = bindings;
     const auto& o = raw.bindings().offsets;
     if (engine::invoke<bool>(b.engine_client, 82) || engine::invoke<bool>(b.engine_client, 93) ||
@@ -141,10 +137,7 @@ void GrenadeLiveScene::Storage::draw(ui::RenderQueue& queue,
             const auto origin = raw.live_origin(selected);
             const auto offset = field<Vector3>(selected, offsets.view_offset);
             eye = {origin.x + offset.x, origin.y + offset.y, origin.z + offset.z};
-            // Use the same current predicted velocity as the release command.
-            // Render-frame smoothing lags behind takeoff and landing.
-            velocity = settings.super_toss.value ? field<Vector3>(selected, o.velocity)
-                                                 : command.trajectory_velocity;
+            velocity = command.trajectory_velocity;
             const auto expected = std::bit_cast<std::int32_t>(std::uint32_t(b.command_count) +
                                                               std::uint32_t(b.last_outgoing));
             if ((velocity.x * velocity.x + velocity.y * velocity.y) + velocity.z * velocity.z >=
@@ -170,8 +163,7 @@ void GrenadeLiveScene::Storage::draw(ui::RenderQueue& queue,
             }
             start_time = b.queries.environment().tick_interval;
         }
-        if (!settings.super_toss.value &&
-            std::sqrt((velocity.x * velocity.x + velocity.y * velocity.y) +
+        if (std::sqrt((velocity.x * velocity.x + velocity.y * velocity.y) +
                       velocity.z * velocity.z) < 10.0f)
             velocity = {};
         Vector3 angles;

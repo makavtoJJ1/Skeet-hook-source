@@ -31,11 +31,14 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
                                        const AcquisitionTargetSettings& settings,
                                        std::uint32_t initial_flags,
                                        const AcquisitionRecordBindings& bindings) {
-    (void)cached; // Native loaders deliberately repeat their own canonical cache lookup.
     auto& frame = *preamble.frame;
     auto* network = static_cast<std::byte*>(player) + 8;
+    const auto start = state.evaluation_count;
+    auto forecast = PoseForecastStatus::no_request;
     for (std::uint32_t age = 0; age < ticks.size(); ++age) {
         const auto ordinal = state.evaluation_count;
+        if (ordinal >= storage.candidates.size() || ordinal - start >= settings.record_limit())
+            break;
         auto& candidate = storage.candidates[ordinal];
         auto& slot = storage.evaluations[ordinal];
         candidate.flags = 0;
@@ -52,6 +55,8 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
         slot.body_disabler_reasons = 0;
         slot.ballistic_evaluations = 0;
         slot.extrapolated = false;
+        slot.rebuild_usage = {};
+        slot.forecast_status = forecast;
         slot.extrapolation_ticks = 0;
         slot.target_handle = *engine::invoke<const std::uint32_t*>(player, 2);
         slot.settings = settings;
@@ -66,7 +71,7 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
             if (!lagcomp::capture_extrapolated_record(frame, player, slot.record, output_flags,
                                                       bindings.extrapolation, bindings.bone_runtime,
                                                       bindings.live_movement, bindings.live_budget,
-                                                      &slot.extrapolation_ticks))
+                                                      &slot.extrapolation_ticks, &slot.rebuild_usage))
                 continue;
             slot.requested_tick = slot.record.header.simulation_tick;
             candidate.flags |= 4U;
@@ -79,12 +84,17 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
             const auto handle = bindings.remembered_target_handle == -1
                                     ? 0x1FFFU
                                     : std::uint32_t(bindings.remembered_target_handle) & 0xFFFFU;
-            if (!(frame.flags & 0x4000U) && engine::invoke<std::uint32_t>(network, 10) != handle)
+            const bool forward_pose = bindings.history.extrapolation.rebuild_pose &&
+                cached.history.count && slot.requested_tick > cached.history.at(0).header.simulation_tick;
+            if (forward_pose)
+                forecast = PoseForecastStatus::rejected;
+            if (!forward_pose && !(frame.flags & 0x4000U) && candidate.entity_index != handle)
                 options &= ~1U;
             if (!lagcomp::select_target_history_record(
                     frame, player, slot.requested_tick, options, slot.record, output_flags,
                     bindings.history, bindings.bone_runtime, bindings.live_movement,
-                    bindings.live_budget, &slot.source_record, &slot.extrapolation_ticks)) {
+                    bindings.live_budget, &slot.source_record, &slot.extrapolation_ticks,
+                    &slot.rebuild_usage)) {
                 slot.requested_tick = -1;
                 continue;
             }
@@ -128,6 +138,9 @@ void prepare_and_submit_target_records(PreambleState& state, PreambleResult& pre
         candidate.target_state_flags = slot.record.header.flags;
         submit_acquisition_scan(storage, state, bindings.scanner, player, ordinal,
                                 policy.evaluation_flags, bindings.settings_menu);
+        if (slot.rebuild_usage.extrapolated_pose)
+            forecast = PoseForecastStatus::submitted;
+        slot.forecast_status = forecast;
         ++state.evaluation_count;
     }
 }

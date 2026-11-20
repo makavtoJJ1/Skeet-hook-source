@@ -34,16 +34,14 @@ struct FinalTraceFilter {
     std::uint8_t teammates_are_enemies = 0;
     std::array<std::byte, 3> padding_29{};
     const FinalTargetContextBindings* bindings;
-    std::array<void*, 5> methods;
+    BulletFilterMethods methods;
     FinalTraceFilter(const FinalTargetContextBindings& b, bool teammate, BallisticEntity preferred,
                      std::int32_t own_team = 0, bool enemies = false)
         : vtable(nullptr), mask(0x4600400BU), exit_mask(0x4600400BU), team(own_team),
-          teammates_are_enemies(enemies), bindings(&b) {
+          teammates_are_enemies(enemies), bindings(&b),
+          methods(b.scan.trace_filter_vtable, teammate ? reinterpret_cast<void*>(teammate_hit)
+                                                       : reinterpret_cast<void*>(regular_hit)) {
         fields_04[4] = preferred;
-        const auto table = b.scan.trace_filter_vtable;
-        methods = {teammate ? reinterpret_cast<void*>(teammate_hit)
-                            : reinterpret_cast<void*>(regular_hit),
-                   table[1], table[2], table[3], table[4]};
         vtable = methods.data();
     }
     BallisticFilter binding() noexcept {

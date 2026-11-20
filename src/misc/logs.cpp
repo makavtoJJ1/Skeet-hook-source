@@ -98,7 +98,7 @@ void NormalLog::write(std::string_view text) {
 namespace {
 void print_console(const NormalLog& log, const char* status, std::uint32_t color,
                    const char* format, std::va_list args) {
-    if (*log.disabled)
+    if (!log.disabled || *log.disabled || !log.cvar)
         return;
     std::array<char, 1024> message{};
     const auto count = vsnprintf(message.data(), message.size() - 2, format, args);
@@ -118,6 +118,12 @@ void NormalLog::console_format(const char* format, ...) {
     std::va_list arguments;
     va_start(arguments, format);
     print_console(*this, nullptr, 0, format, arguments);
+    va_end(arguments);
+}
+void NormalLog::console_prefixed(const char* prefix, std::uint32_t color, const char* format, ...) {
+    std::va_list arguments;
+    va_start(arguments, format);
+    print_console(*this, prefix, color, format, arguments);
     va_end(arguments);
 }
 void NormalLog::console_status(bool success, const char* format, ...) {

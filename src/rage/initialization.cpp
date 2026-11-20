@@ -22,6 +22,8 @@ void initialize_storage(const RageResetBindings& bindings) noexcept {
         std::memset(&evaluation.native, 0, sizeof(evaluation.native));
         evaluation.record.header.field_00 = 0;
         evaluation.extrapolated = false;
+        evaluation.rebuild_usage = {};
+        evaluation.forecast_status = PoseForecastStatus::no_request;
         evaluation.extrapolation_ticks = 0;
         evaluation.target_handle = UINT32_MAX;
         restore_evaluation_state(evaluation.native, bindings.acquisition.candidates[index],

@@ -129,7 +129,10 @@ std::int32_t select_hitbox_bone_matrices(const BoneModel& model, std::span<const
                                          std::span<Matrix3x4> hitboxes) noexcept {
     if (!model.studio_header)
         return 0;
-    const auto count = std::min(std::size_t(19), model.hitbox_bones.size());
+    const auto count = std::min({std::size_t(19), model.hitbox_bones.size(), hitboxes.size()});
+    for (std::size_t i = 0; i < count; ++i)
+        if (model.hitbox_bones[i] >= bones.size())
+            return 0;
     for (std::size_t i = 0; i < count; ++i)
         hitboxes[i] = bones[model.hitbox_bones[i]];
     return std::int32_t(count);

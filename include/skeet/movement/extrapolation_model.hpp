@@ -7,6 +7,9 @@ namespace skeet {
 
 inline constexpr std::int32_t maximum_pose_extrapolation_ticks = 4;
 
+std::optional<int> pose_receive_age(std::int32_t now, std::int32_t received,
+                                    float receive_interval, float simulation_interval) noexcept;
+
 struct ExtrapolatedMotion {
     MovementVector velocity_step;
     bool coast;
